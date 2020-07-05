@@ -2,7 +2,9 @@
 #include <libopencm3/stm32/rcc.h>
 #include <libopencm3/stm32/gpio.h>
 #include <libopencm3/stm32/usart.h>
+#include <libopencm3/stm32/timer.h>
 #include <libopencm3/cm3/nvic.h>
+#include <libopencm3/cm3/systick.h>
 
 #define SHD_SWITCH_CMD              0x01
 #define SHD_SWITCH_FADE_CMD         0x02
@@ -24,8 +26,11 @@
 
 #define SHD_BUFFER_SIZE             256
 
-uint8_t rx_data[SHD_BUFFER_SIZE] = {0};
-uint8_t byte_counter = 0;
+static volatile uint8_t  rx_data[SHD_BUFFER_SIZE] = {0};
+static volatile uint8_t  byte_counter             = 0;
+static volatile uint8_t  systick_ms               = 0;
+// static volatile uint32_t freq                     = 0;
+static volatile uint32_t cc1if = 0, cc2if = 0, c1count = 0, c2count = 0;
 
 static void sleep(uint16_t time)
 {
@@ -138,12 +143,11 @@ static bool read_serial(uint8_t *buf, uint8_t *index)
 
 void usart1_isr(void)
 {
-    static uint8_t payload[2] = {0xff, 0xf1};
+    static uint8_t payload[4] = {0};
 
     // Check if we were called because of RXNE
-    if (((USART_CR1(USART1) & USART_CR1_RXNEIE) != 0) &&
-        ((USART_ISR(USART1) & USART_ISR_RXNE) != 0)) {
-
+    if (((USART_CR1(USART1) & USART_CR1_RXNEIE) != 0) && ((USART_ISR(USART1) & USART_ISR_RXNE) != 0))
+    {
         // Retrieve the data from the peripheral
         if (read_serial(rx_data, &byte_counter))
         {
@@ -153,11 +157,12 @@ void usart1_isr(void)
     }
 
     // Check if we were called because of TXE
-    if (((USART_CR1(USART1) & USART_CR1_TXEIE) != 0) &&
-        ((USART_ISR(USART1) & USART_ISR_TXE) != 0)) {
-
+    if (((USART_CR1(USART1) & USART_CR1_TXEIE) != 0) && ((USART_ISR(USART1) & USART_ISR_TXE) != 0))
+    {
         // Put data into the transmit register
-        generate_packet(rx_data[1], SHD_VERSION_CMD, 2, payload);
+        for (int i = 0; i < 4; i++)
+            payload[i] = (cc1if >> (8 * i)) & 0xff;
+        generate_packet(rx_data[1], SHD_VERSION_CMD, 4, payload);
 
         // Disable the TXE interrupt as we don't need it anymore
         USART_CR1(USART1) &= ~USART_CR1_TXEIE;
@@ -166,11 +171,18 @@ void usart1_isr(void)
 
 static void clock_setup(void)
 {
-    // Enable GPIOC clock for USART
+    // Enable 48 MHz high speed internal oscillator
+    rcc_clock_setup_in_hsi_out_48mhz();
+
+    // Enable GPIOA and GPIOB clocks
     rcc_periph_clock_enable(RCC_GPIOA);
+    rcc_periph_clock_enable(RCC_GPIOB);
 
     // Enable clocks for USART1
     rcc_periph_clock_enable(RCC_USART1);
+
+    // Enable clocks for TIM2
+    rcc_periph_clock_enable(RCC_TIM2);
 }
 
 static void usart_setup(void)
@@ -203,6 +215,48 @@ static void gpio_setup(void)
 {
     // Setup GPIO pins for MOSFET outputs
     gpio_mode_setup(GPIOA, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO8 | GPIO11);
+
+    // Setup GPIO pins for test pads
+    gpio_mode_setup(GPIOA, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO6 | GPIO7);
+
+    // Setup GPIO pins for PWM inputs from HLW8012
+    gpio_mode_setup(GPIOA, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO0 | GPIO1);
+    // Setup TIM2_CH1 and TIM2_CH2 as alternate function
+    gpio_set_af(GPIOA, GPIO_AF2, GPIO0 | GPIO1);
+
+    // Setup GPIO pins for SEL pin on HLW8012
+    gpio_mode_setup(GPIOB, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO8);
+}
+
+static void systick_setup(int xms)
+{
+    systick_set_clocksource(STK_CSR_CLKSOURCE_EXT);
+    STK_CVR = 0; // clear counter so it starts right away
+    // ToDo(jamesturton): Hardcode this value
+    systick_set_reload(rcc_ahb_frequency / 8 / 1000 * xms);
+    systick_interrupt_enable();
+    systick_counter_enable();
+}
+
+static void timer_setup(void) {
+    timer_disable_counter(TIM2);
+    // timer_reset(TIM2);
+    // nvic_set_priority(NVIC_DMA1_CHANNEL3_IRQ, 2);
+    nvic_enable_irq(NVIC_TIM2_IRQ);
+    timer_set_mode(TIM2, TIM_CR1_CKD_CK_INT, TIM_CR1_CMS_EDGE, TIM_CR1_DIR_UP);
+    timer_set_prescaler(TIM2, 48);
+    timer_ic_set_input(TIM2, TIM_IC1, TIM_IC_IN_TI1);
+    timer_ic_set_input(TIM2, TIM_IC2, TIM_IC_IN_TI1);
+    timer_ic_set_filter(TIM2, TIM_IC_IN_TI1, TIM_IC_CK_INT_N_2);
+    timer_ic_set_prescaler(TIM2, TIM_IC1, TIM_IC_PSC_OFF);
+    timer_slave_set_mode(TIM2, TIM_SMCR_SMS_RM);
+    timer_slave_set_trigger(TIM2, TIM_SMCR_TS_TI1FP1);
+    TIM_CCER(TIM2) &= ~(TIM_CCER_CC2P|TIM_CCER_CC2E|TIM_CCER_CC1P|TIM_CCER_CC1E);
+    TIM_CCER(TIM2) |= TIM_CCER_CC2P|TIM_CCER_CC2E|TIM_CCER_CC1E;
+    timer_ic_enable(TIM2, TIM_IC1);
+    timer_ic_enable(TIM2, TIM_IC2);
+    timer_enable_irq(TIM2, TIM_DIER_CC1IE|TIM_DIER_CC2IE);
+    timer_enable_counter(TIM2);
 }
 
 int main(void)
@@ -211,11 +265,50 @@ int main(void)
     gpio_setup();
     usart_setup();
 
-    while (1)
-    {
-        gpio_toggle(GPIOA, GPIO8 | GPIO11);
-        sleep(1000);
-    }
+    timer_setup();
+    systick_setup(1000);
+
+    gpio_set(GPIOB, GPIO8);
+    gpio_set(GPIOA, GPIO8 | GPIO11);
+
+    while (1);
 
     return 0;
+}
+
+
+// Interupts
+
+void tim2_isr(void)
+{
+    uint32_t sr = TIM_SR(TIM2);
+
+    if (sr & TIM_SR_CC1IF)
+    {
+        cc1if = TIM_CCR1(TIM2);
+        ++c1count;
+        timer_clear_flag(TIM2, TIM_SR_CC1IF);
+    }
+    if (sr & TIM_SR_CC2IF)
+    {
+        cc2if = TIM_CCR2(TIM2);
+        ++c2count;
+        timer_clear_flag(TIM2, TIM_SR_CC2IF);
+    }
+}
+
+void sys_tick_handler(void)
+{
+    systick_ms++;
+
+    // gpio_toggle(GPIOA, GPIO8 | GPIO11);
+    // gpio_toggle(GPIOB, GPIO8);
+
+    // freq = freq_temp + timer_get_counter(TIM2);
+
+    // /* Reset the counter. This will generate one extra overflow for next measurement. */
+    // /* In case of nothing got counted, manually generate a reset to keep consistency. */
+    // timer_set_counter(TIM2, 1);
+    // timer_set_counter(TIM2, 0);
+    // freq_temp = 0;
 }
