@@ -76,21 +76,21 @@ static int check_byte(uint8_t *buf, uint8_t index)
 
 static void packet_process(uint8_t* buf)
 {
-	return;
+    return;
 }
 
 static void send_packet(uint8_t *buf, int len)
 {
-	for (int i = 0; i < len; i++)
-		usart_send_blocking(USART1, buf[i]);
+    for (int i = 0; i < len; i++)
+        usart_send_blocking(USART1, buf[i]);
 }
 
 static void generate_packet(uint8_t id, uint8_t cmd, uint8_t len, uint8_t *payload)
 {
-	// 4 bytes pre-amble, 3 bytes post-amble
-	uint8_t data[4 + len + 3];
+    // 4 bytes pre-amble, 3 bytes post-amble
+    uint8_t data[4 + len + 3];
     uint16_t chksm;
-	uint8_t pos = 0;
+    uint8_t pos = 0;
 
     data[0] = SHD_START_BYTE;
     data[1] = id;
@@ -116,103 +116,106 @@ static void generate_packet(uint8_t id, uint8_t cmd, uint8_t len, uint8_t *paylo
 
 static bool read_serial(uint8_t *buf, uint8_t *index)
 {
-	uint8_t serial_in_byte = usart_recv(USART1);
-	buf[*index] = serial_in_byte;
-	
-	int check = check_byte(buf, *index);
+    uint8_t serial_in_byte = usart_recv(USART1);
+    buf[*index] = serial_in_byte;
+    
+    int check = check_byte(buf, *index);
 
-	if (check > 1)
-	{
-		// finished
-		packet_process(buf);
-		*index = 0;
-		return true;
-	}
-	else if (check == 0)
-		*index = 0;	// wrong data
-	else
-		(*index)++;  // not finished recieving yet
+    if (check > 1)
+    {
+        // finished
+        packet_process(buf);
+        *index = 0;
+        return true;
+    }
+    else if (check == 0)
+        *index = 0; // wrong data
+    else
+        (*index)++;  // not finished recieving yet
 
     return false;
 }
 
 void usart1_isr(void)
 {
-	static uint8_t payload[2] = {0xff, 0xf1};
+    static uint8_t payload[2] = {0xff, 0xf1};
 
-	// Check if we were called because of RXNE
-	if (((USART_CR1(USART1) & USART_CR1_RXNEIE) != 0) &&
-	    ((USART_ISR(USART1) & USART_ISR_RXNE) != 0)) {
+    // Check if we were called because of RXNE
+    if (((USART_CR1(USART1) & USART_CR1_RXNEIE) != 0) &&
+        ((USART_ISR(USART1) & USART_ISR_RXNE) != 0)) {
 
-		// Retrieve the data from the peripheral
-		if (read_serial(rx_data, &byte_counter))
-		{
-			// Enable transmit interrupt so it sends back the data
-			USART_CR1(USART1) |= USART_CR1_TXEIE;
-		}
-	}
+        // Retrieve the data from the peripheral
+        if (read_serial(rx_data, &byte_counter))
+        {
+            // Enable transmit interrupt so it sends back the data
+            USART_CR1(USART1) |= USART_CR1_TXEIE;
+        }
+    }
 
-	// Check if we were called because of TXE
-	if (((USART_CR1(USART1) & USART_CR1_TXEIE) != 0) &&
-	    ((USART_ISR(USART1) & USART_ISR_TXE) != 0)) {
+    // Check if we were called because of TXE
+    if (((USART_CR1(USART1) & USART_CR1_TXEIE) != 0) &&
+        ((USART_ISR(USART1) & USART_ISR_TXE) != 0)) {
 
-		// Put data into the transmit register
-		generate_packet(rx_data[1], SHD_VERSION_CMD, 2, payload);
+        // Put data into the transmit register
+        generate_packet(rx_data[1], SHD_VERSION_CMD, 2, payload);
 
-		// Disable the TXE interrupt as we don't need it anymore
-		USART_CR1(USART1) &= ~USART_CR1_TXEIE;
-	}
+        // Disable the TXE interrupt as we don't need it anymore
+        USART_CR1(USART1) &= ~USART_CR1_TXEIE;
+    }
 }
 
 static void clock_setup(void)
 {
-	// Enable GPIOC clock for USART
-	rcc_periph_clock_enable(RCC_GPIOA);
+    // Enable GPIOC clock for USART
+    rcc_periph_clock_enable(RCC_GPIOA);
 
-	// Enable clocks for USART1
-	rcc_periph_clock_enable(RCC_USART1);
+    // Enable clocks for USART1
+    rcc_periph_clock_enable(RCC_USART1);
 }
 
 static void usart_setup(void)
 {
-	// Enable the USART2 interrupt
-	nvic_enable_irq(NVIC_USART1_IRQ);
+    // Setup GPIO pins for USART1 transmit and receive
+    gpio_mode_setup(GPIOA, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO9 | GPIO10);
 
-	// Setup USART1 parameters
-	usart_set_baudrate(USART1, 115200);
-	usart_set_databits(USART1, 8);
-	usart_set_parity(USART1, USART_PARITY_NONE);
-	usart_set_stopbits(USART1, USART_CR2_STOPBITS_1);
-	usart_set_mode(USART1, USART_MODE_TX_RX);
-	usart_set_flow_control(USART1, USART_FLOWCONTROL_NONE);
+    // Setup USART1 TX pin and RX pin as alternate function
+    gpio_set_af(GPIOA, GPIO_AF1, GPIO9 | GPIO10);
 
-	// Enable USART1 receive interrupt
-	USART_CR1(USART1) |= USART_CR1_RXNEIE;
+    // Enable the USART2 interrupt
+    nvic_enable_irq(NVIC_USART1_IRQ);
 
-	// Finally enable the USART
-	usart_enable(USART1);
+    // Setup USART1 parameters
+    usart_set_baudrate(USART1, 115200);
+    usart_set_databits(USART1, 8);
+    usart_set_parity(USART1, USART_PARITY_NONE);
+    usart_set_stopbits(USART1, USART_CR2_STOPBITS_1);
+    usart_set_mode(USART1, USART_MODE_TX_RX);
+    usart_set_flow_control(USART1, USART_FLOWCONTROL_NONE);
+
+    // Enable USART1 receive interrupt
+    USART_CR1(USART1) |= USART_CR1_RXNEIE;
+
+    // Finally enable the USART
+    usart_enable(USART1);
 }
 
 static void gpio_setup(void)
 {
-	// Setup GPIO pins for USART1 transmit and receive
-	gpio_mode_setup(GPIOA, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO9 | GPIO10);
-
-	// Setup USART1 TX pin and RX pin as alternate function
-	gpio_set_af(GPIOA, GPIO_AF1, GPIO9 | GPIO10);
+    // Setup GPIO pins for MOSFET outputs
+    gpio_mode_setup(GPIOA, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO8 | GPIO11);
 }
 
 int main(void)
 {
-	clock_setup();
-	gpio_setup();
-	usart_setup();
+    clock_setup();
+    gpio_setup();
+    usart_setup();
 
-	while (1)
-	{
-		// Wait forever and do nothing
-		__asm__("nop");
-	}
+    while (1)
+    {
+        gpio_toggle(GPIOA, GPIO8 | GPIO11);
+        sleep(1000);
+    }
 
-	return 0;
+    return 0;
 }
