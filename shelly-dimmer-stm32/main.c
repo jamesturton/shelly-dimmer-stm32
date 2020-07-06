@@ -3,8 +3,12 @@
 #include <libopencm3/stm32/gpio.h>
 #include <libopencm3/stm32/usart.h>
 #include <libopencm3/stm32/timer.h>
+#include <libopencm3/stm32/exti.h>
 #include <libopencm3/cm3/nvic.h>
 #include <libopencm3/cm3/systick.h>
+
+#define SHD_DRIVER_MAJOR_VERSION    0
+#define SHD_DRIVER_MINOR_VERSION    1
 
 #define SHD_SWITCH_CMD              0x01
 #define SHD_SWITCH_FADE_CMD         0x02
@@ -28,10 +32,15 @@
 
 static volatile uint8_t  rx_data[SHD_BUFFER_SIZE] = {0};
 static volatile uint8_t  byte_counter             = 0;
+
+static volatile uint8_t  id                       = 0;
+static volatile uint8_t  cmd                      = 0;
+
 static volatile uint8_t  systick_ms               = 0;
-// static volatile uint32_t freq                     = 0;
+static volatile uint32_t freq                     = 0;
 static volatile uint32_t cc1if = 0, cc2if = 0, c1count = 0, c2count = 0;
 
+static volatile uint16_t brightness               = 0;
 
 static uint16_t checksum(uint8_t *buf, int len)
 {
@@ -74,9 +83,27 @@ static int check_byte(uint8_t *buf, uint8_t index)
     return 0;
 }
 
-static void packet_process(uint8_t* buf)
+static void packet_process(uint8_t *buf)
 {
-    return;
+    uint8_t pos = 1; // Skip start byte
+    uint8_t len = 0;
+        
+    id = buf[pos++];
+    cmd = buf[pos++];
+    len = buf[pos++];
+    
+    switch (cmd)
+    {
+        case SHD_SWITCH_CMD:
+            {
+                brightness = buf[pos + 1] << 8 | buf[pos + 0];
+                timer_set_oc_value(TIM1, TIM_OC1, 1000 - brightness);
+                timer_set_oc_value(TIM1, TIM_OC4, 1000 - brightness);
+            }
+            break;
+        default:
+            break;
+    }
 }
 
 static void send_packet(uint8_t *buf, int len)
@@ -114,6 +141,50 @@ static void generate_packet(uint8_t id, uint8_t cmd, uint8_t len, uint8_t *paylo
     send_packet(data, pos);
 }
 
+static void generate_reply(void)
+{
+    uint8_t data[SHD_BUFFER_SIZE] = {0};
+    uint8_t len = 0;
+
+    switch (cmd)
+    {
+    case SHD_SWITCH_CMD:
+        {
+            len = 1;
+            data[0] = 0x01;
+        }
+        break;
+    
+    case SHD_VERSION_CMD:
+        {
+            len = 2;
+            data[0] = SHD_DRIVER_MINOR_VERSION;
+            data[1] = SHD_DRIVER_MAJOR_VERSION;
+        }
+        break;
+
+    case SHD_POLL_CMD:
+        {
+            len = 9;
+            data[0] = 0;                    // ??
+            data[1] = 0;                    // ??
+            data[2] = brightness & 0xff;    // brightness
+            data[3] = brightness >> 8;      // brightness
+            data[4] = cc1if;                // wattage
+            data[5] = cc1if >> 8;           // wattage
+            data[6] = cc1if >> 16;          // wattage
+            data[7] = cc1if >> 24;          // wattage
+            data[8] = 0;                    // fade rate
+        }
+        break;
+
+    default:
+        return;
+    }
+
+    generate_packet(id, cmd, len, data);
+}
+
 static bool read_serial(uint8_t *buf, uint8_t *index)
 {
     uint8_t serial_in_byte = usart_recv(USART1);
@@ -138,8 +209,6 @@ static bool read_serial(uint8_t *buf, uint8_t *index)
 
 void usart1_isr(void)
 {
-    static uint8_t payload[4] = {0};
-
     // Check if we were called because of RXNE
     if (((USART_CR1(USART1) & USART_CR1_RXNEIE) != 0) && ((USART_ISR(USART1) & USART_ISR_RXNE) != 0))
     {
@@ -154,10 +223,8 @@ void usart1_isr(void)
     // Check if we were called because of TXE
     if (((USART_CR1(USART1) & USART_CR1_TXEIE) != 0) && ((USART_ISR(USART1) & USART_ISR_TXE) != 0))
     {
-        // Put data into the transmit register
-        for (int i = 0; i < 4; i++)
-            payload[i] = (cc1if >> (8 * i)) & 0xff;
-        generate_packet(rx_data[1], SHD_VERSION_CMD, 4, payload);
+        // Generate our reply
+        generate_reply();
 
         // Disable the TXE interrupt as we don't need it anymore
         USART_CR1(USART1) &= ~USART_CR1_TXEIE;
@@ -179,6 +246,9 @@ static void clock_setup(void)
     // Enable clocks for TIM1 and TIM2
     rcc_periph_clock_enable(RCC_TIM1);
     rcc_periph_clock_enable(RCC_TIM2);
+
+    // Enable clocks for EXTI
+    rcc_periph_clock_enable(RCC_SYSCFG_COMP);
 }
 
 static void usart_setup(void)
@@ -223,6 +293,9 @@ static void gpio_setup(void)
 
     // Setup GPIO pins for SEL pin on HLW8012
     gpio_mode_setup(GPIOB, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO8);
+
+    // Setup GPIO pins for mains detect pin
+    gpio_mode_setup(GPIOB, GPIO_MODE_INPUT, GPIO_PUPD_NONE, GPIO2);
 }
 
 static void systick_setup(int xms)
@@ -240,13 +313,13 @@ static void timer1_setup(void)
     timer_disable_counter(TIM1);
     rcc_periph_reset_pulse(RST_TIM1);
     timer_set_mode(TIM1, TIM_CR1_CKD_CK_INT, TIM_CR1_CMS_EDGE, TIM_CR1_DIR_UP);
-    timer_set_prescaler(TIM1, 48 * 1000 * 20 / UINT16_MAX / 2);
+    timer_set_prescaler(TIM1, 480);
     // Only needed for advanced timers:
     // timer_set_repetition_counter(TIM1, 0);
     timer_enable_break_main_output(TIM1);
     timer_enable_preload(TIM1);
     timer_continuous_mode(TIM1);
-    timer_set_period(TIM1, UINT16_MAX);
+    timer_set_period(TIM1, 1000);
 
     timer_disable_oc_output(TIM1, TIM_OC1);
     timer_set_oc_mode(TIM1, TIM_OC1, TIM_OCM_PWM2);
@@ -257,8 +330,8 @@ static void timer1_setup(void)
     timer_enable_oc_output(TIM1, TIM_OC4);
 
     timer_enable_counter(TIM1);
-    timer_set_oc_value(TIM1, TIM_OC1, UINT16_MAX/2);
-    timer_set_oc_value(TIM1, TIM_OC4, UINT16_MAX/2);
+    timer_set_oc_value(TIM1, TIM_OC1, 1000/2);
+    timer_set_oc_value(TIM1, TIM_OC4, 1000/2);
 }
 
 static void timer2_setup(void)
@@ -283,15 +356,26 @@ static void timer2_setup(void)
     timer_enable_counter(TIM2);
 }
 
+static void exti_setup(void)
+{
+	// Enable EXTI2 interrupt
+	nvic_enable_irq(NVIC_EXTI2_3_IRQ);
+	// Configure the EXTI subsystem
+	exti_select_source(EXTI2, GPIOB);
+	exti_set_trigger(EXTI2, EXTI_TRIGGER_BOTH);
+	exti_enable_request(EXTI2);
+}
+
 int main(void)
 {
     clock_setup();
     gpio_setup();
     usart_setup();
-
     timer1_setup();
     timer2_setup();
-    systick_setup(1000);
+    exti_setup();
+
+    systick_setup(1);
 
     gpio_set(GPIOB, GPIO8);
     // gpio_set(GPIOA, GPIO8 | GPIO11);
@@ -336,4 +420,12 @@ void sys_tick_handler(void)
     // timer_set_counter(TIM2, 1);
     // timer_set_counter(TIM2, 0);
     // freq_temp = 0;
+}
+
+void exti2_3_isr(void)
+{
+    timer_set_counter(TIM1, 0);
+    freq = systick_ms;
+    systick_ms = 0;
+	exti_reset_request(EXTI2);
 }
