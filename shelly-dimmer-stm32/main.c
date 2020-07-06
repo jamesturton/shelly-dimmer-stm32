@@ -32,11 +32,6 @@ static volatile uint8_t  systick_ms               = 0;
 // static volatile uint32_t freq                     = 0;
 static volatile uint32_t cc1if = 0, cc2if = 0, c1count = 0, c2count = 0;
 
-static void sleep(uint16_t time)
-{
-    for (int i = 0; i < (1000 * time); i++)
-        __asm__("NOP");
-}
 
 static uint16_t checksum(uint8_t *buf, int len)
 {
@@ -181,7 +176,8 @@ static void clock_setup(void)
     // Enable clocks for USART1
     rcc_periph_clock_enable(RCC_USART1);
 
-    // Enable clocks for TIM2
+    // Enable clocks for TIM1 and TIM2
+    rcc_periph_clock_enable(RCC_TIM1);
     rcc_periph_clock_enable(RCC_TIM2);
 }
 
@@ -213,15 +209,16 @@ static void usart_setup(void)
 
 static void gpio_setup(void)
 {
-    // Setup GPIO pins for MOSFET outputs
-    gpio_mode_setup(GPIOA, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO8 | GPIO11);
+    // Setup GPIO pins for MOSFET outputs as TIM1_CH1 and TIM1_CH4 alternate functions
+    gpio_mode_setup(GPIOA, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO8 | GPIO11);
+    // gpio_set_output_options(GPIOA, GPIO_OTYPE_PP, GPIO_OSPEED_HIGH, GPIO8 | GPIO11);
+    gpio_set_af(GPIOA, GPIO_AF2, GPIO8 | GPIO11);
 
     // Setup GPIO pins for test pads
     gpio_mode_setup(GPIOA, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO6 | GPIO7);
 
-    // Setup GPIO pins for PWM inputs from HLW8012
+    // Setup GPIO pins for PWM inputs from HLW8012 as TIM2_CH1 and TIM2_CH2 alternate functions
     gpio_mode_setup(GPIOA, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO0 | GPIO1);
-    // Setup TIM2_CH1 and TIM2_CH2 as alternate function
     gpio_set_af(GPIOA, GPIO_AF2, GPIO0 | GPIO1);
 
     // Setup GPIO pins for SEL pin on HLW8012
@@ -238,9 +235,36 @@ static void systick_setup(int xms)
     systick_counter_enable();
 }
 
-static void timer_setup(void) {
+static void timer1_setup(void)
+{
+    timer_disable_counter(TIM1);
+    rcc_periph_reset_pulse(RST_TIM1);
+    timer_set_mode(TIM1, TIM_CR1_CKD_CK_INT, TIM_CR1_CMS_EDGE, TIM_CR1_DIR_UP);
+    timer_set_prescaler(TIM1, 48 * 1000 * 20 / UINT16_MAX / 2);
+    // Only needed for advanced timers:
+    // timer_set_repetition_counter(TIM1, 0);
+    timer_enable_break_main_output(TIM1);
+    timer_enable_preload(TIM1);
+    timer_continuous_mode(TIM1);
+    timer_set_period(TIM1, UINT16_MAX);
+
+    timer_disable_oc_output(TIM1, TIM_OC1);
+    timer_set_oc_mode(TIM1, TIM_OC1, TIM_OCM_PWM2);
+    timer_enable_oc_output(TIM1, TIM_OC1);
+
+    timer_disable_oc_output(TIM1, TIM_OC4);
+    timer_set_oc_mode(TIM1, TIM_OC4, TIM_OCM_PWM2);
+    timer_enable_oc_output(TIM1, TIM_OC4);
+
+    timer_enable_counter(TIM1);
+    timer_set_oc_value(TIM1, TIM_OC1, UINT16_MAX/2);
+    timer_set_oc_value(TIM1, TIM_OC4, UINT16_MAX/2);
+}
+
+static void timer2_setup(void)
+{
     timer_disable_counter(TIM2);
-    // timer_reset(TIM2);
+    rcc_periph_reset_pulse(RST_TIM2);
     // nvic_set_priority(NVIC_DMA1_CHANNEL3_IRQ, 2);
     nvic_enable_irq(NVIC_TIM2_IRQ);
     timer_set_mode(TIM2, TIM_CR1_CKD_CK_INT, TIM_CR1_CMS_EDGE, TIM_CR1_DIR_UP);
@@ -265,11 +289,12 @@ int main(void)
     gpio_setup();
     usart_setup();
 
-    timer_setup();
+    timer1_setup();
+    timer2_setup();
     systick_setup(1000);
 
     gpio_set(GPIOB, GPIO8);
-    gpio_set(GPIOA, GPIO8 | GPIO11);
+    // gpio_set(GPIOA, GPIO8 | GPIO11);
 
     while (1);
 
