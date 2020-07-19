@@ -50,3 +50,7 @@ Here is a guess of the pinout of the *STM32F031K6* chip.
 | 30    | PB7       | NC                        |                               |
 | 31    | BOOT0     | BOOT0                     | Also connected to S4789BB?    |
 | 32    | PB8       | SEL HLW8012               |                               |
+
+# Useful links
+ - [HLW8012 Information](https://tinkerman.cat/post/hlw8012-ic-new-sonoff-pow)
+ - [STM32F031 Reference manual](https://www.st.com/resource/en/reference_manual/dm00031936-stm32f0x1stm32f0x2stm32f0x8-advanced-armbased-32bit-mcus-stmicroelectronics.pdf)
