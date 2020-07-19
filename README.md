@@ -52,4 +52,5 @@ Here is a guess of the pinout of the *STM32F031K6* chip.
 | 32    | PB8       | SEL HLW8012               |                               |
 
 # Useful links
- - https://tinkerman.cat/post/hlw8012-ic-new-sonoff-pow
+ - [HLW8012 Information](https://tinkerman.cat/post/hlw8012-ic-new-sonoff-pow)
+ - [STM32F031 Reference manual](https://www.st.com/resource/en/reference_manual/dm00031936-stm32f0x1stm32f0x2stm32f0x8-advanced-armbased-32bit-mcus-stmicroelectronics.pdf)
