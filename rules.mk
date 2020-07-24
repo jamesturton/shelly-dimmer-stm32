@@ -49,8 +49,10 @@ LD	= $(PREFIX)gcc
 OBJCOPY	= $(PREFIX)objcopy
 OBJDUMP	= $(PREFIX)objdump
 OOCD	?= openocd
+GDB		:= $(PREFIX)gdb
 
 OPENCM3_INC = $(OPENCM3_DIR)/include
+SCRIPT_DIR	= $(OPENCM3_DIR)/../scripts
 
 # Inclusion of library header files
 INCLUDES += $(patsubst %,-I%, . $(OPENCM3_INC) )
@@ -151,19 +153,28 @@ $(PROJECT).elf: $(OBJS) $(LDSCRIPT) $(LIBDEPS)
 %.list: %.elf
 	$(OBJDUMP) -S $< > $@
 
+ifeq ($(BMP_PORT),)
 %.flash: %.elf
 	@printf "  FLASH\t$<\n"
 ifeq (,$(OOCD_FILE))
 	$(Q)(echo "halt; program $(realpath $(*).elf) verify reset" | nc -4 localhost 4444 2>/dev/null) || \
 		$(OOCD) -f interface/$(OOCD_INTERFACE).cfg \
 		-f target/$(OOCD_TARGET).cfg \
-		-c "program $(realpath $(*).elf) verify reset exit" \
+		-c "program $(*).elf verify reset exit" \
 		$(NULL)
 else
 	$(Q)(echo "halt; program $(realpath $(*).elf) verify reset" | nc -4 localhost 4444 2>/dev/null) || \
 		$(OOCD) -f $(OOCD_FILE) \
 		-c "program $(realpath $(*).elf) verify reset exit" \
 		$(NULL)
+endif
+else
+%.flash: %.elf
+	@printf "  GDB   $(*).elf (flash)\n"
+	$(Q)$(GDB) --batch \
+		   -ex 'target extended-remote $(BMP_PORT)' \
+		   -x $(SCRIPT_DIR)/black_magic_probe_flash.scr \
+		   $(*).elf
 endif
 
 clean:

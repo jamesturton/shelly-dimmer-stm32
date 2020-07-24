@@ -1,0 +1,21 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"type": "shell",
+			"label": "flash",
+			"command": "make",
+			"args": [
+				"flash",
+				"BMP_PORT=/dev/ttyS12"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}/src"
+			},
+			"problemMatcher": [
+				"$gcc"
+			],
+			"group": "build"
+		}
+	]
+}

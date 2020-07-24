@@ -1,4 +1,6 @@
 bin/
 *.elf
 *.bin
+*.o
+*.cortex-debug.*.json
 generated.*.ld
