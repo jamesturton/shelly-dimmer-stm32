@@ -9,7 +9,7 @@
             "cwd": "${workspaceRoot}/src",
             "executable": "shelly-dimmer-stm32.elf",
             "svdFile": "../tools/STM32F031x.svd",
-            "BMPGDBSerialPort": "/dev/ttyS12",
+            "BMPGDBSerialPort": "/dev/ttyS15",
             "powerOverBMP": "enable",
           },
     ]

@@ -30,17 +30,32 @@
 
 #define SHD_BUFFER_SIZE             256
 
-static volatile uint8_t  rx_data[SHD_BUFFER_SIZE] = {0};
-static volatile uint8_t  byte_counter             = 0;
+#define SHD_CF1_PULSE_TIMEOUT       2000
 
-static volatile uint8_t  id                       = 0;
-static volatile uint8_t  cmd                      = 0;
+static uint8_t  rx_data[SHD_BUFFER_SIZE] = {0};
+static uint8_t  byte_counter             = 0;
 
-static volatile uint8_t  systick_ms               = 0;
-static volatile uint32_t freq                     = 0;
-static volatile uint32_t cc1if = 0, cc2if = 0, c1count = 0, c2count = 0;
+static uint8_t  id                       = 0;
+static uint8_t  cmd                      = 0;
 
-static volatile uint16_t brightness               = 0;
+static uint32_t systick_ms               = 0;
+static uint32_t line_freq                = 0;
+
+static uint32_t tim_ccr1_now             = 0;
+static uint32_t tim_ccr1_last            = 0;
+static uint32_t tim_ccr2_now             = 0;
+static uint32_t tim_ccr2_last            = 0;
+static uint32_t last_cf_interrupt        = 0;
+static uint32_t first_cf1_interrupt      = 0;
+static uint32_t last_cf1_interrupt       = 0;
+static uint32_t current_pulse_width      = 0;
+static uint32_t voltage_pulse_width      = 0;
+static uint32_t power_pulse_width        = 0;
+static uint32_t power_pulse_count        = 0;
+static bool     current_mode             = false;
+
+static uint16_t brightness               = 0;
+static bool     leading_edge             = true;
 
 static uint16_t checksum(uint8_t *buf, int len)
 {
@@ -87,18 +102,62 @@ static void packet_process(uint8_t *buf)
 {
     uint8_t pos = 1; // Skip start byte
     uint8_t len = 0;
+    uint32_t brightness_adj = 0;
         
     id = buf[pos++];
     cmd = buf[pos++];
     len = buf[pos++];
+
+    (void)len;
     
     switch (cmd)
     {
         case SHD_SWITCH_CMD:
             {
                 brightness = buf[pos + 1] << 8 | buf[pos + 0];
-                timer_set_oc_value(TIM1, TIM_OC1, 1000 - brightness);
-                timer_set_oc_value(TIM1, TIM_OC4, 1000 - brightness);
+                // Adjust period to mains freqency (with 2% margin)
+                if (leading_edge)
+                    brightness_adj = 1000 - brightness;
+                else
+                    brightness_adj = brightness;
+                
+                brightness_adj = brightness_adj * line_freq / 1000 * 1.02;
+                timer_set_oc_value(TIM1, TIM_OC1, brightness_adj);
+                timer_set_oc_value(TIM1, TIM_OC4, brightness_adj);
+            }
+            break;
+        case SHD_SETTINGS_CMD:
+            {
+                leading_edge = buf[pos + 2] - 1;
+
+                if (leading_edge)
+                {
+                    timer_disable_oc_output(TIM1, TIM_OC1);
+                    timer_set_oc_mode(TIM1, TIM_OC1, TIM_OCM_PWM2);
+                    timer_enable_oc_output(TIM1, TIM_OC1);
+
+                    timer_disable_oc_output(TIM1, TIM_OC4);
+                    timer_set_oc_mode(TIM1, TIM_OC4, TIM_OCM_PWM2);
+                    timer_enable_oc_output(TIM1, TIM_OC4);
+
+                    brightness_adj = 1000 - brightness;
+                }
+                else
+                {
+                    timer_disable_oc_output(TIM1, TIM_OC1);
+                    timer_set_oc_mode(TIM1, TIM_OC1, TIM_OCM_PWM1);
+                    timer_enable_oc_output(TIM1, TIM_OC1);
+
+                    timer_disable_oc_output(TIM1, TIM_OC4);
+                    timer_set_oc_mode(TIM1, TIM_OC4, TIM_OCM_PWM1);
+                    timer_enable_oc_output(TIM1, TIM_OC4);
+
+                    brightness_adj = brightness;
+                }
+
+                brightness_adj = brightness_adj * line_freq / 1000 * 1.02;
+                timer_set_oc_value(TIM1, TIM_OC1, brightness_adj);
+                timer_set_oc_value(TIM1, TIM_OC4, brightness_adj);
             }
             break;
         default:
@@ -112,7 +171,7 @@ static void send_packet(uint8_t *buf, int len)
         usart_send_blocking(USART1, buf[i]);
 }
 
-static void generate_packet(uint8_t id, uint8_t cmd, uint8_t len, uint8_t *payload)
+static void generate_packet(uint8_t len, uint8_t *payload)
 {
     // 4 bytes pre-amble, 3 bytes post-amble
     uint8_t data[4 + len + 3];
@@ -141,10 +200,63 @@ static void generate_packet(uint8_t id, uint8_t cmd, uint8_t len, uint8_t *paylo
     send_packet(data, pos);
 }
 
+static void check_cf_signal(void)
+{
+    if ((systick_ms - last_cf_interrupt) > SHD_CF1_PULSE_TIMEOUT)
+        power_pulse_width = 0;
+}
+
+static void check_cf1_signal(void)
+{
+    if ((systick_ms - last_cf1_interrupt) > SHD_CF1_PULSE_TIMEOUT)
+    {
+        if (current_mode)
+            current_pulse_width = 0;
+        else
+            voltage_pulse_width = 0;
+        
+        current_mode = !current_mode;
+
+        if (current_mode)
+            gpio_clear(GPIOB, GPIO8);
+        else
+            gpio_set(GPIOB, GPIO8);
+
+        last_cf1_interrupt = first_cf1_interrupt = systick_ms;
+    }
+}
+
+static uint32_t get_current(void)
+{
+    // Power measurements are more sensitive to switch offs,
+    // so we first check if power is 0 to set _current to 0 too
+    if (power_pulse_width == 0)
+        current_pulse_width = 0;
+    else
+        check_cf1_signal();
+
+    return current_pulse_width;
+}
+
+static uint32_t get_voltage(void)
+{
+    check_cf1_signal();
+    return voltage_pulse_width;
+}
+
+static uint32_t get_active_power(void)
+{
+    check_cf_signal();
+    return power_pulse_width;
+}
+
 static void generate_reply(void)
 {
     uint8_t data[SHD_BUFFER_SIZE] = {0};
     uint8_t len = 0;
+    uint32_t voltage = get_voltage();
+    uint32_t current = get_current();
+    uint32_t wattage = get_active_power();
 
     switch (cmd)
     {
@@ -165,16 +277,24 @@ static void generate_reply(void)
 
     case SHD_POLL_CMD:
         {
-            len = 9;
-            data[0] = 0;                    // ??
-            data[1] = 0;                    // ??
-            data[2] = brightness & 0xff;    // brightness
-            data[3] = brightness >> 8;      // brightness
-            data[4] = cc1if;                // wattage
-            data[5] = cc1if >> 8;           // wattage
-            data[6] = cc1if >> 16;          // wattage
-            data[7] = cc1if >> 24;          // wattage
-            data[8] = 0;                    // fade rate
+            len      = 17;
+            data[0]  = 0;                    // ??
+            data[1]  = 0;                    // ??
+            data[2]  = brightness & 0xff;    // brightness
+            data[3]  = brightness >> 8;      // brightness
+            data[4]  = wattage;              // active power
+            data[5]  = wattage >> 8;         // active power
+            data[6]  = wattage >> 16;        // active power
+            data[7]  = wattage >> 24;        // active power
+            data[8]  = voltage;              // voltage
+            data[9]  = voltage >> 8;         // voltage
+            data[10] = voltage >> 16;        // voltage
+            data[11] = voltage >> 24;        // voltage
+            data[12] = current;              // current
+            data[13] = current >> 8;         // current
+            data[14] = current >> 16;        // current
+            data[15] = current >> 24;        // current
+            data[16] = leading_edge;         // fade rate
         }
         break;
 
@@ -182,7 +302,7 @@ static void generate_reply(void)
         return;
     }
 
-    generate_packet(id, cmd, len, data);
+    generate_packet(len, data);
 }
 
 static bool read_serial(uint8_t *buf, uint8_t *index)
@@ -259,7 +379,8 @@ static void usart_setup(void)
     // Setup USART1 TX pin and RX pin as alternate function
     gpio_set_af(GPIOA, GPIO_AF1, GPIO9 | GPIO10);
 
-    // Enable the USART2 interrupt
+    // Enable the USART1 interrupt
+    nvic_set_priority(NVIC_USART1_IRQ, 255);
     nvic_enable_irq(NVIC_USART1_IRQ);
 
     // Setup USART1 parameters
@@ -293,6 +414,7 @@ static void gpio_setup(void)
 
     // Setup GPIO pins for SEL pin on HLW8012
     gpio_mode_setup(GPIOB, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO8);
+    gpio_set_output_options(GPIOB, GPIO_OTYPE_OD, GPIO_OSPEED_2MHZ, GPIO8);
 
     // Setup GPIO pins for mains detect pin
     gpio_mode_setup(GPIOB, GPIO_MODE_INPUT, GPIO_PUPD_NONE, GPIO2);
@@ -313,46 +435,60 @@ static void timer1_setup(void)
     timer_disable_counter(TIM1);
     rcc_periph_reset_pulse(RST_TIM1);
     timer_set_mode(TIM1, TIM_CR1_CKD_CK_INT, TIM_CR1_CMS_EDGE, TIM_CR1_DIR_UP);
-    timer_set_prescaler(TIM1, 480);
+    timer_set_prescaler(TIM1, 48);
     // Only needed for advanced timers:
     // timer_set_repetition_counter(TIM1, 0);
     timer_enable_break_main_output(TIM1);
     timer_enable_preload(TIM1);
     timer_continuous_mode(TIM1);
-    timer_set_period(TIM1, 1000);
+    // timer_set_period(TIM1, 2000);
 
     timer_disable_oc_output(TIM1, TIM_OC1);
     timer_set_oc_mode(TIM1, TIM_OC1, TIM_OCM_PWM2);
+    timer_set_oc_polarity_high(TIM1, TIM_OC1);
     timer_enable_oc_output(TIM1, TIM_OC1);
+    timer_set_oc_value(TIM1, TIM_OC1, 0xffffffff);
 
     timer_disable_oc_output(TIM1, TIM_OC4);
     timer_set_oc_mode(TIM1, TIM_OC4, TIM_OCM_PWM2);
+    timer_set_oc_polarity_high(TIM1, TIM_OC4);
     timer_enable_oc_output(TIM1, TIM_OC4);
+    timer_set_oc_value(TIM1, TIM_OC4, 0xffffffff);
 
     timer_enable_counter(TIM1);
-    timer_set_oc_value(TIM1, TIM_OC1, 1000/2);
-    timer_set_oc_value(TIM1, TIM_OC4, 1000/2);
 }
 
 static void timer2_setup(void)
 {
     timer_disable_counter(TIM2);
     rcc_periph_reset_pulse(RST_TIM2);
-    // nvic_set_priority(NVIC_DMA1_CHANNEL3_IRQ, 2);
     nvic_enable_irq(NVIC_TIM2_IRQ);
     timer_set_mode(TIM2, TIM_CR1_CKD_CK_INT, TIM_CR1_CMS_EDGE, TIM_CR1_DIR_UP);
     timer_set_prescaler(TIM2, 48);
+    timer_enable_preload(TIM2);
+    timer_continuous_mode(TIM2);
+    timer_slave_set_mode(TIM2, TIM_SMCR_SMS_OFF);
+
     timer_ic_set_input(TIM2, TIM_IC1, TIM_IC_IN_TI1);
-    timer_ic_set_input(TIM2, TIM_IC2, TIM_IC_IN_TI1);
     timer_ic_set_filter(TIM2, TIM_IC_IN_TI1, TIM_IC_CK_INT_N_2);
     timer_ic_set_prescaler(TIM2, TIM_IC1, TIM_IC_PSC_OFF);
-    timer_slave_set_mode(TIM2, TIM_SMCR_SMS_RM);
-    timer_slave_set_trigger(TIM2, TIM_SMCR_TS_TI1FP1);
-    TIM_CCER(TIM2) &= ~(TIM_CCER_CC2P|TIM_CCER_CC2E|TIM_CCER_CC1P|TIM_CCER_CC1E);
-    TIM_CCER(TIM2) |= TIM_CCER_CC2P|TIM_CCER_CC2E|TIM_CCER_CC1E;
+    timer_disable_oc_output(TIM2, TIM_OC1);
+    timer_set_oc_polarity_high(TIM2, TIM_OC1);
+    timer_enable_oc_output(TIM2, TIM_OC1);
     timer_ic_enable(TIM2, TIM_IC1);
+    timer_enable_irq(TIM2, TIM_DIER_CC1IE);
+    
+    timer_ic_set_input(TIM2, TIM_IC2, TIM_IC_IN_TI2);
+    timer_ic_set_filter(TIM2, TIM_IC_IN_TI2, TIM_IC_CK_INT_N_2);
+    timer_ic_set_prescaler(TIM2, TIM_IC2, TIM_IC_PSC_OFF);
+    timer_disable_oc_output(TIM2, TIM_OC2);
+    timer_set_oc_polarity_high(TIM2, TIM_OC2);
+    timer_enable_oc_output(TIM2, TIM_OC2);
     timer_ic_enable(TIM2, TIM_IC2);
-    timer_enable_irq(TIM2, TIM_DIER_CC1IE|TIM_DIER_CC2IE);
+    timer_enable_irq(TIM2, TIM_DIER_CC2IE);
+
+    // Todo(jamesturton): Why do we have to do this to make it work??
+    timer_set_counter(TIM2, 0xffffffff);
     timer_enable_counter(TIM2);
 }
 
@@ -394,14 +530,42 @@ void tim2_isr(void)
 
     if (sr & TIM_SR_CC1IF)
     {
-        cc1if = TIM_CCR1(TIM2);
-        ++c1count;
+        tim_ccr1_now = TIM_CCR1(TIM2);
+        uint32_t pulse_width = tim_ccr1_now - tim_ccr1_last;
+        tim_ccr1_last = tim_ccr1_now;
+        uint32_t now = systick_ms;
+
+        if (last_cf1_interrupt != first_cf1_interrupt)
+        {
+            if (current_mode)
+                current_pulse_width = pulse_width;
+            else
+                voltage_pulse_width = pulse_width;
+        }
+
+        if ((now - first_cf1_interrupt) > SHD_CF1_PULSE_TIMEOUT)
+        {
+            current_mode = !current_mode;
+
+            if (current_mode)
+                gpio_clear(GPIOB, GPIO8);
+            else
+                gpio_set(GPIOB, GPIO8);
+
+            first_cf1_interrupt = now;
+        }
+
+        last_cf1_interrupt = now;
         timer_clear_flag(TIM2, TIM_SR_CC1IF);
     }
     if (sr & TIM_SR_CC2IF)
     {
-        cc2if = TIM_CCR2(TIM2);
-        ++c2count;
+        tim_ccr2_now = TIM_CCR2(TIM2);
+        power_pulse_width = tim_ccr2_now - tim_ccr2_last;
+        tim_ccr2_last = tim_ccr2_now;
+
+        ++power_pulse_count;
+        last_cf_interrupt = systick_ms;
         timer_clear_flag(TIM2, TIM_SR_CC2IF);
     }
 }
@@ -409,23 +573,12 @@ void tim2_isr(void)
 void sys_tick_handler(void)
 {
     systick_ms++;
-
-    // gpio_toggle(GPIOA, GPIO8 | GPIO11);
-    // gpio_toggle(GPIOB, GPIO8);
-
-    // freq = freq_temp + timer_get_counter(TIM2);
-
-    // /* Reset the counter. This will generate one extra overflow for next measurement. */
-    // /* In case of nothing got counted, manually generate a reset to keep consistency. */
-    // timer_set_counter(TIM2, 1);
-    // timer_set_counter(TIM2, 0);
-    // freq_temp = 0;
 }
 
 void exti2_3_isr(void)
 {
+    line_freq = timer_get_counter(TIM1);
     timer_set_counter(TIM1, 0);
-    freq = systick_ms;
-    systick_ms = 0;
+    // timer_set_period(TIM1, line_freq * 1.18);
 	exti_reset_request(EXTI2);
 }
