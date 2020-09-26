@@ -3,13 +3,23 @@ An open-source firmware for the STM32 co-processor on the Shelly Dimmer.
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
 # Instructions
- 1. git clone --recurse-submodules https://github.com/jamesturton/shelly-dimmer-stm32.git
- 2. cd shelly-dimmer-stm32
- 3. make -C libopencm3 # (Only needed once)
- 4. make -C shelly-dimmer-stm32
+ 1. ```git clone --recurse-submodules https://github.com/jamesturton/shelly-dimmer-stm32.git```
+ 2. ```cd shelly-dimmer-stm32```
+ 3. ```make -C libopencm3 # (Only needed once)```
+ 4. ```make -C src```
 
 If you have an older git, or got ahead of yourself and skipped the ```--recurse-submodules```
 you can fix things by running ```git submodule update --init``` (This is only needed once)
+
+To flash the firmware directly to the STM32 chip using a programmer such as the Black Magic Probe (ST-Link could also be used):
+
+ 5. ```make -C src flash BMP_PORT=/dev/ttyBmpGdb```
+
+ To convert the binary firmware file to a header file for use in Tasmota firmware use the ```binary-parser``` utility in tthe ```scripts``` directory:
+
+ 6. ```gcc scripts/binary-parser.c -o scripts/binary-parser```
+ 7. ```chmod +x scripts/binary-parser```
+ 8. ```scripts/binary-parser src/shelly-dimmer-stm32.bin shelly-dimmer-stm32.h 50 1```
 
 # Pinout
 Here is a guess of the pinout of the *STM32F031K6* chip.
