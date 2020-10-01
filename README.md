@@ -26,40 +26,40 @@ Here is a guess of the pinout of the *STM32F031K6* chip.
 
 ![stm32f031k6](https://user-images.githubusercontent.com/6130792/86444616-494b8080-bd11-11ea-8eeb-c07b69b8af35.PNG)
 
-| Pin   | Name      | Function                  | Comment                       |
-| ----- | --------- | ------------------------- | ----------------------------- |
-| 1     | VDD       | 3V3                       |                               |
-| 2     | OCS_IN    | NC                        |                               |
-| 3     | OCS_OUT   | NC                        |                               |
-| 4     | NRST      | NRST                      |                               |
-| 5     | VDDA      | 3V3                       |                               |
-| 6     | PA0       | CF1 HLW8012               |                               |
-| 7     | PA1       | CF HLW8012                |                               |
-| 8     | PA2       | NC                        |                               |
-| 9     | PA3       | NC                        |                               |
-| 10    | PA4       | NC                        |                               |
-| 11    | PA5       | NC                        |                               |
-| 12    | PA6       | TEST POINT                | Only to test point?           |
-| 13    | PA7       | TEST POINT                | Only to test point?           |
-| 14    | PB0       | NC                        |                               |
-| 15    | PB1       | NC                        |                               |
-| 16    | PB2       | Zero-crossing detection   |                               |
-| 17    | VDD       | GND                       |                               |
-| 18    | PA8       | ON MOSFET 1               | OSG65R200J                    |
-| 19    | PA9       | USART_TX                  |                               |
-| 20    | PA10      | USART_RX                  |                               |
-| 21    | PA11      | ON MOSFET 2               | OSG65R200J                    |
-| 22    | PA12      | NC                        |                               |
-| 23    | PA13      | SWDIO                     |                               |
-| 24    | PA14      | SWCLK                     |                               |
-| 25    | PA15      | NC                        |                               |
-| 26    | PB3       | NC                        |                               |
-| 27    | PB4       | NC                        |                               |
-| 28    | PB5       | NC                        |                               |
-| 29    | PB6       | NC                        |                               |
-| 30    | PB7       | NC                        |                               |
-| 31    | BOOT0     | BOOT0                     | Also connected to S4789BB?    |
-| 32    | PB8       | SEL HLW8012               |                               |
+| Pin   | Name      | Function - Shelly Dimmer 1    | Function - Shelly Dimmer 2    |
+| ----- | --------- | ----------------------------- | ----------------------------- |
+| 1     | VDD       | 3V3                           | 3V3                           |
+| 2     | OCS_IN    | -                             | -                             |
+| 3     | OCS_OUT   | -                             | -                             |
+| 4     | NRST      | NRST                          | NRST                          |
+| 5     | VDDA      | 3V3                           | 3V3                           |
+| 6     | PA0       | CF1 HLW8012                   | -                             |
+| 7     | PA1       | CF HLW8012                    | -                             |
+| 8     | PA2       | -                             | -                             |
+| 9     | PA3       | -                             | ??                            |
+| 10    | PA4       | -                             | -                             |
+| 11    | PA5       | -                             | Live pin sense                |
+| 12    | PA6       | TEST POINT                    | -                             |
+| 13    | PA7       | TEST POINT                    | Output pin sense              |
+| 14    | PB0       | -                             | ??                            |
+| 15    | PB1       | -                             | Output pin sense pull-up??    |
+| 16    | PB2       | Zero-crossing detection       | ??                            |
+| 17    | VDD       | GND                           | GND                           |
+| 18    | PA8       | ON MOSFET 1                   | -                             |
+| 19    | PA9       | USART_TX                      | USART_TX                      |
+| 20    | PA10      | USART_RX                      | USART_RX                      |
+| 21    | PA11      | ON MOSFET 2                   | ON MOSFET 1                   |
+| 22    | PA12      | -                             | ON MOSFET 2                   |
+| 23    | PA13      | SWDIO                         | SWDIO                         |
+| 24    | PA14      | SWCLK                         | SWCLK                         |
+| 25    | PA15      | -                             | -                             |
+| 26    | PB3       | -                             | -                             |
+| 27    | PB4       | -                             | -                             |
+| 28    | PB5       | -                             | -                             |
+| 29    | PB6       | -                             | -                             |
+| 30    | PB7       | -                             | Pin7 A42 BAKN                 |
+| 31    | BOOT0     | BOOT0                         | BOOT0                         |
+| 32    | PB8       | SEL HLW8012                   | -                             |
 
 # Useful links
  - [HLW8012 Information](https://tinkerman.cat/post/hlw8012-ic-new-sonoff-pow)
