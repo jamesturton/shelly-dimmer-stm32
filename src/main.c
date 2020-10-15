@@ -53,6 +53,18 @@
 #define SHD_CF1_PULSE_MIN                   1
 #define SHD_CF1_PULSE_MAX                   1000
 
+typedef int32_t ring_size_t;
+
+struct ring {
+    uint8_t *data;
+    ring_size_t size;
+    uint32_t begin;
+    uint32_t end;
+};
+
+struct ring     output_ring;
+static uint8_t  output_ring_buffer[SHD_BUFFER_SIZE];
+
 static uint8_t  rx_data[SHD_BUFFER_SIZE]    = {0};
 static uint8_t  byte_counter                = 0;
 
@@ -79,6 +91,42 @@ static bool     current_mode                = false;
 static uint16_t brightness                  = 0;
 static uint32_t brightness_adj              = 0;
 static bool     leading_edge                = true;
+
+
+static void ring_init(struct ring *ring, uint8_t *buf, ring_size_t size)
+{
+    ring->data = buf;
+    ring->size = size;
+    ring->begin = 0;
+    ring->end = 0;
+}
+
+static int32_t ring_write_ch(struct ring *ring, uint8_t ch)
+{
+    if (((ring->end + 1) % ring->size) != ring->begin)
+    {
+        ring->data[ring->end++] = ch;
+        ring->end %= ring->size;
+        return (uint32_t)ch;
+    }
+
+    return -1;
+}
+
+static int32_t ring_read_ch(struct ring *ring, uint8_t *ch)
+{
+    int32_t ret = -1;
+
+    if (ring->begin != ring->end)
+    {
+        ret = ring->data[ring->begin++];
+        ring->begin %= ring->size;
+        if (ch)
+            *ch = ret;
+    }
+
+    return ret;
+}
 
 static uint16_t checksum(uint8_t *buf, int len)
 {
@@ -150,12 +198,6 @@ static void packet_process(uint8_t *buf)
     }
 }
 
-static void send_packet(uint8_t *buf, int len)
-{
-    for (int i = 0; i < len; i++)
-        usart_send_blocking(USART1, buf[i]);    // Should we use async sending?
-}
-
 static void generate_packet(uint8_t len, uint8_t *payload)
 {
     // 4 bytes pre-amble, 3 bytes post-amble
@@ -182,7 +224,8 @@ static void generate_packet(uint8_t len, uint8_t *payload)
     data[pos++] = chksm & 0xff;
     data[pos++] = SHD_END_BYTE;
 
-    send_packet(data, pos);
+    for (int i = 0; i < pos; i++)
+        ring_write_ch(&output_ring, data[i]);
 }
 
 static void check_cf_signal(void)
@@ -325,6 +368,9 @@ void usart1_isr(void)
         // Retrieve the data from the peripheral
         if (read_serial(rx_data, &byte_counter))
         {
+            // Generate our reply
+            generate_reply();
+
             // Enable transmit interrupt so it sends back the data
             USART_CR1(USART1) |= USART_CR1_TXEIE;
         }
@@ -334,11 +380,20 @@ void usart1_isr(void)
     if (((USART_CR1(USART1) & USART_CR1_TXEIE) != 0) &&
         ((USART_ISR(USART1) & USART_ISR_TXE) != 0))
     {
-        // Generate our reply
-        generate_reply();
+        int32_t data;
 
-        // Disable the TXE interrupt as we don't need it anymore
-        USART_CR1(USART1) &= ~USART_CR1_TXEIE;
+        data = ring_read_ch(&output_ring, NULL);
+
+        if (data == -1)
+        {
+            // Disable the TXE interrupt as we don't need it anymore
+            USART_CR1(USART1) &= ~USART_CR1_TXEIE;
+        }
+        else
+        {
+            // Put data into the transmit register
+            usart_send(USART1, data);
+        }
     }
 }
 
@@ -364,6 +419,9 @@ static void clock_setup(void)
 
 static void usart_setup(void)
 {
+    // Initialize output ring buffer
+    ring_init(&output_ring, output_ring_buffer, SHD_BUFFER_SIZE);
+
     // Setup GPIO pins for USART1 transmit and receive
     gpio_mode_setup(GPIOA, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO9 | GPIO10);
 
@@ -522,15 +580,15 @@ static void timer2_setup(void)
 
 static void exti_setup(void)
 {
-	// Enable external interrupt 2
-	nvic_enable_irq(NVIC_EXTI2_3_IRQ);
+    // Enable external interrupt 2
+    nvic_enable_irq(NVIC_EXTI2_3_IRQ);
 
-	// Configure the EXTI subsystem
-	exti_select_source(EXTI2, GPIOB);
-	exti_set_trigger(EXTI2, EXTI_TRIGGER_BOTH);
+    // Configure the EXTI subsystem
+    exti_select_source(EXTI2, GPIOB);
+    exti_set_trigger(EXTI2, EXTI_TRIGGER_BOTH);
 
     // Finally enable EXTI2
-	exti_enable_request(EXTI2);
+    exti_enable_request(EXTI2);
 }
 
 int main(void)
@@ -553,7 +611,8 @@ int main(void)
     systick_setup();
 
     // Keep doing this forever
-    while (1);
+    while (1)
+        __asm__("nop");
 
     return 0;
 }
@@ -668,5 +727,5 @@ void exti2_3_isr(void)
     timer_set_counter(TIM1, 0);
 
     // Reset interupt request
-	exti_reset_request(EXTI2);
+    exti_reset_request(EXTI2);
 }
