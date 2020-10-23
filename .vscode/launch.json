@@ -2,15 +2,25 @@
     "version": "0.2.0",
     "configurations": [
           {
-            "name": "Cortex Debug (BlackMagicProbe)",
+            "name": "Shelly Dimmer 1 (BlackMagicProbe)",
             "type": "cortex-debug",
             "request": "attach",
             "servertype": "bmp",
             "cwd": "${workspaceRoot}/src",
             "executable": "shelly-dimmer-stm32.elf",
-            "svdFile": "../tools/STM32F031x.svd",
+            "svdFile": "../scripts/STM32F031x.svd",
             "BMPGDBSerialPort": "/dev/ttyS15",
             "powerOverBMP": "enable",
+          },
+          {
+            "name": "Shelly Dimmer 2 (BlackMagicProbe)",
+            "type": "cortex-debug",
+            "request": "attach",
+            "servertype": "bmp",
+            "cwd": "${workspaceRoot}/src",
+            "executable": "shelly-dimmer-stm32.elf",
+            "svdFile": "../scripts/STM32F0xx.svd",
+            "BMPGDBSerialPort": "/dev/ttyS15",
           },
     ]
 }

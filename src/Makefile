@@ -7,6 +7,7 @@ BINARY = usart
 
 # TODO - you will need to edit these two lines!
 DEVICE=stm32f031k6
+# DEVICE=stm32f051k8
 
 # You shouldn't have to edit anything below here.
 OPENCM3_DIR=../libopencm3

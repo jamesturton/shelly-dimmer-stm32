@@ -7,7 +7,7 @@
 			"command": "make",
 			"args": [
 				"flash",
-				"BMP_PORT=/dev/ttyS12"
+				"BMP_PORT=/dev/ttyS15"
 			],
 			"options": {
 				"cwd": "${workspaceFolder}/src"
