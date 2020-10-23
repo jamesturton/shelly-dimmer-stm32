@@ -27,7 +27,7 @@
 #include <libopencm3/cm3/systick.h>
 
 #define SHD_DRIVER_MAJOR_VERSION            50
-#define SHD_DRIVER_MINOR_VERSION            1
+#define SHD_DRIVER_MINOR_VERSION            2
 
 #define SHD_SWITCH_CMD                      0x01
 #define SHD_SWITCH_FADE_CMD                 0x02
@@ -90,7 +90,7 @@ static bool     current_mode                = false;
 
 static uint16_t brightness                  = 0;
 static uint32_t brightness_adj              = 0;
-static bool     leading_edge                = true;
+static bool     leading_edge                = false;
 
 
 static void ring_init(struct ring *ring, uint8_t *buf, ring_size_t size)
@@ -190,7 +190,7 @@ static void packet_process(uint8_t *buf)
             break;
         case SHD_SETTINGS_CMD:
             {
-                leading_edge = buf[pos + 2] - 1;
+                leading_edge = 2 - buf[pos + 2];
             }
             break;
         default:
@@ -292,6 +292,7 @@ static void generate_reply(void)
     switch (cmd)
     {
     case SHD_SWITCH_CMD:
+    case SHD_SETTINGS_CMD:
         {
             len = 1;
             data[0] = 0x01;
