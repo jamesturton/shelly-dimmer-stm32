@@ -42,7 +42,7 @@ Here is a guess of the pinout of the *STM32F031K6* chip.
 | 12    | PA6       | TEST POINT                    | -                             | Input  |
 | 13    | PA7       | TEST POINT                    | Output pin sense              | Analog |
 | 14    | PB0       | -                             | ??                            | Input  |
-| 15    | PB1       | -                             | Output pin sense pull-up??    | Input  |
+| 15    | PB1       | -                             | Board HW version?             | Input  |
 | 16    | PB2       | Zero-crossing detection       | ??                            | Input ExtInt  |
 | 17    | VDD       | GND                           | GND                           |  |
 | 18    | PA8       | ON MOSFET 1                   | -                             | Input  |

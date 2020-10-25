@@ -26,8 +26,8 @@
 #include <libopencm3/cm3/nvic.h>
 #include <libopencm3/cm3/systick.h>
 
-#define SHD_DRIVER_MAJOR_VERSION            50
-#define SHD_DRIVER_MINOR_VERSION            2
+#define SHD_DRIVER_MAJOR_VERSION            51
+#define SHD_DRIVER_MINOR_VERSION            0
 
 #define SHD_SWITCH_CMD                      0x01
 #define SHD_SWITCH_FADE_CMD                 0x02
@@ -88,6 +88,7 @@ static uint32_t power_pulse_width           = 0;
 static uint32_t power_pulse_count           = 0;
 static bool     current_mode                = false;
 
+static uint8_t  hw_version                  = 0;
 static uint16_t brightness                  = 0;
 static uint32_t brightness_adj              = 0;
 static bool     leading_edge                = false;
@@ -450,12 +451,13 @@ static void usart_setup(void)
 
 static void gpio_setup(void)
 {
-    // Setup GPIO pins for MOSFET outputs as TIM1_CH1 and TIM1_CH4 alternate
-    // functions
-    gpio_mode_setup(GPIOA, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO8 | GPIO11);
-    // gpio_set_output_options(GPIOA, GPIO_OTYPE_PP,
-    //                         GPIO_OSPEED_HIGH, GPIO8 | GPIO11);
-    gpio_set_af(GPIOA, GPIO_AF2, GPIO8 | GPIO11);
+    // Setup GPIO pins for hw version detect
+    gpio_mode_setup(GPIOA, GPIO_MODE_INPUT, GPIO_PUPD_NONE, GPIO3);
+    hw_version = gpio_get(GPIOB, GPIO1);
+
+    // Setup GPIO pins for MOSFET outputs on both HW1 and HW2
+    gpio_mode_setup(GPIOA, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE,
+                    GPIO8 | GPIO11 | GPIO12);
 
     // Setup GPIO pins for test pads
     gpio_mode_setup(GPIOA, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO6 | GPIO7);
@@ -499,6 +501,9 @@ static void timer1_setup(void)
     timer_disable_counter(TIM1);
     rcc_periph_reset_pulse(RST_TIM1);
 
+    // Enable timer 1 interupt
+    nvic_enable_irq(NVIC_TIM1_CC_IRQ);
+
     // Initialise timer 1 as up counting on clock edge
     timer_set_mode(TIM1, TIM_CR1_CKD_CK_INT, TIM_CR1_CMS_EDGE, TIM_CR1_DIR_UP);
 
@@ -512,21 +517,9 @@ static void timer1_setup(void)
     // Configure timer 1 with preload and continuous mode
     timer_enable_preload(TIM1);
     timer_continuous_mode(TIM1);
-    // timer_set_period(TIM1, 2000);
+    timer_set_period(TIM1, 65535);
 
-    // Setup channel 1, PA8
-    timer_disable_oc_output(TIM1, TIM_OC1);
-    timer_set_oc_mode(TIM1, TIM_OC1, TIM_OCM_PWM2);
-    timer_set_oc_polarity_high(TIM1, TIM_OC1);
-    timer_enable_oc_output(TIM1, TIM_OC1);
-    timer_set_oc_value(TIM1, TIM_OC1, 0xffffffff);
-
-    // Setup channel 4, PA11
-    timer_disable_oc_output(TIM1, TIM_OC4);
-    timer_set_oc_mode(TIM1, TIM_OC4, TIM_OCM_PWM2);
-    timer_set_oc_polarity_high(TIM1, TIM_OC4);
-    timer_enable_oc_output(TIM1, TIM_OC4);
-    timer_set_oc_value(TIM1, TIM_OC4, 0xffffffff);
+    timer_enable_irq(TIM1, TIM_DIER_CC1IE);
 
     // Finally enable timer 1
     timer_enable_counter(TIM1);
@@ -623,13 +616,12 @@ int main(void)
 
 void tim2_isr(void)
 {
-    // Read timer 2 status register
-    uint32_t sr = TIM_SR(TIM2);
-
     // Check which capture/compare interrupt triggered
-    if (sr & TIM_SR_CC1IF)
+    if (timer_get_flag(TIM2, TIM_SR_CC1IF))
     {
         // CF1 triggered
+        // Reset interupt flag
+        timer_clear_flag(TIM2, TIM_SR_CC1IF);
 
         // Calculate period of CF1 signal
         tim_ccr1_now = TIM_CCR1(TIM2);
@@ -665,12 +657,12 @@ void tim2_isr(void)
         }
 
         last_cf1_interrupt = now;
-        // Reset interupt flag
-        timer_clear_flag(TIM2, TIM_SR_CC1IF);
     }
-    if (sr & TIM_SR_CC2IF)
+    if (timer_get_flag(TIM2, TIM_SR_CC2IF))
     {
         // CF triggered
+        // Reset interupt flag
+        timer_clear_flag(TIM2, TIM_SR_CC2IF);
 
         // Calculate period of CF signal
         tim_ccr2_now = TIM_CCR2(TIM2);
@@ -679,8 +671,6 @@ void tim2_isr(void)
 
         ++power_pulse_count;
         last_cf_interrupt = systick_ms;
-        // Reset interupt flag
-        timer_clear_flag(TIM2, TIM_SR_CC2IF);
     }
 }
 
@@ -690,42 +680,54 @@ void sys_tick_handler(void)
     systick_ms++;
 }
 
+void tim1_cc_isr(void)
+{
+    if (timer_get_flag(TIM1, TIM_SR_CC1IF))
+    {
+        // Reset interupt flag
+        timer_clear_flag(TIM1, TIM_SR_CC1IF);
+
+        if(leading_edge != (bool)hw_version)
+        {
+            gpio_clear(GPIOA, GPIO8);
+            gpio_clear(GPIOA, GPIO11);
+            gpio_clear(GPIOA, GPIO12);
+        }
+        else
+        {
+            gpio_set(GPIOA, GPIO8);
+            gpio_set(GPIOA, GPIO11);
+            gpio_set(GPIOA, GPIO12);
+        }
+    }
+}
+
 void exti2_3_isr(void)
 {
     line_freq = timer_get_counter(TIM1);
 
     // Change ouput polarity if needed depending on leading edge mode
-    if (leading_edge)
-    {
-        timer_disable_oc_output(TIM1, TIM_OC1);
-        timer_set_oc_mode(TIM1, TIM_OC1, TIM_OCM_PWM2);
-        timer_enable_oc_output(TIM1, TIM_OC1);
-
-        timer_disable_oc_output(TIM1, TIM_OC4);
-        timer_set_oc_mode(TIM1, TIM_OC4, TIM_OCM_PWM2);
-        timer_enable_oc_output(TIM1, TIM_OC4);
-
-        brightness_adj = 1000 - brightness;
-    }
-    else
-    {
-        timer_disable_oc_output(TIM1, TIM_OC1);
-        timer_set_oc_mode(TIM1, TIM_OC1, TIM_OCM_PWM1);
-        timer_enable_oc_output(TIM1, TIM_OC1);
-
-        timer_disable_oc_output(TIM1, TIM_OC4);
-        timer_set_oc_mode(TIM1, TIM_OC4, TIM_OCM_PWM1);
-        timer_enable_oc_output(TIM1, TIM_OC4);
-
-        brightness_adj = brightness;
-    }
+    brightness_adj = leading_edge ? 1000 - brightness : brightness;
 
     // Adjust the brigtness value so we will always be fully on when the
     // requested value is 1000
-    brightness_adj = brightness_adj * 1.02;
+    brightness_adj = brightness_adj * line_freq / 1000 * 1.02;
     timer_set_oc_value(TIM1, TIM_OC1, brightness_adj);
     timer_set_oc_value(TIM1, TIM_OC4, brightness_adj);
     timer_set_counter(TIM1, 0);
+
+    if(leading_edge != (bool)hw_version)
+    {
+        gpio_set(GPIOA, GPIO8);
+        gpio_set(GPIOA, GPIO11);
+        gpio_set(GPIOA, GPIO12);
+    }
+    else
+    {   
+        gpio_clear(GPIOA, GPIO8);
+        gpio_clear(GPIOA, GPIO11);
+        gpio_clear(GPIOA, GPIO12);
+    }
 
     // Reset interupt request
     exti_reset_request(EXTI2);
