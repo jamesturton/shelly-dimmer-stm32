@@ -90,6 +90,7 @@ static bool     current_mode                = false;
 
 static uint8_t  hw_version                  = 0;
 static uint16_t brightness                  = 0;
+static uint16_t brightness_req              = 0;
 static uint32_t brightness_adj              = 0;
 static bool     leading_edge                = false;
 
@@ -186,7 +187,7 @@ static void packet_process(uint8_t *buf)
     {
         case SHD_SWITCH_CMD:
             {
-                brightness = buf[pos + 1] << 8 | buf[pos + 0];
+                brightness_req = buf[pos + 1] << 8 | buf[pos + 0];
             }
             break;
         case SHD_SETTINGS_CMD:
@@ -311,23 +312,23 @@ static void generate_reply(void)
     case SHD_POLL_CMD:
         {
             len      = 17;
-            data[0]  = 0;                    // ??
-            data[1]  = 0;                    // ??
-            data[2]  = brightness & 0xff;    // brightness
-            data[3]  = brightness >> 8;      // brightness
-            data[4]  = wattage;              // active power
-            data[5]  = wattage >> 8;         // active power
-            data[6]  = wattage >> 16;        // active power
-            data[7]  = wattage >> 24;        // active power
-            data[8]  = voltage;              // voltage
-            data[9]  = voltage >> 8;         // voltage
-            data[10] = voltage >> 16;        // voltage
-            data[11] = voltage >> 24;        // voltage
-            data[12] = current;              // current
-            data[13] = current >> 8;         // current
-            data[14] = current >> 16;        // current
-            data[15] = current >> 24;        // current
-            data[16] = leading_edge;         // fade rate
+            data[0]  = 0;                       // ??
+            data[1]  = 0;                       // ??
+            data[2]  = brightness_req & 0xff;   // brightness
+            data[3]  = brightness_req >> 8;     // brightness
+            data[4]  = wattage;                 // active power
+            data[5]  = wattage >> 8;            // active power
+            data[6]  = wattage >> 16;           // active power
+            data[7]  = wattage >> 24;           // active power
+            data[8]  = voltage;                 // voltage
+            data[9]  = voltage >> 8;            // voltage
+            data[10] = voltage >> 16;           // voltage
+            data[11] = voltage >> 24;           // voltage
+            data[12] = current;                 // current
+            data[13] = current >> 8;            // current
+            data[14] = current >> 16;           // current
+            data[15] = current >> 24;           // current
+            data[16] = leading_edge;            // fade rate
         }
         break;
 
@@ -687,6 +688,11 @@ void tim1_cc_isr(void)
         // Reset interupt flag
         timer_clear_flag(TIM1, TIM_SR_CC1IF);
 
+        // No need to turn off if brightness is full
+        if (brightness == 1000)
+            return;
+
+        // Turn off the MOSFETs
         if(leading_edge != (bool)hw_version)
         {
             gpio_clear(GPIOA, GPIO8);
@@ -704,18 +710,25 @@ void tim1_cc_isr(void)
 
 void exti2_3_isr(void)
 {
+    // Reset interupt request
+    exti_reset_request(EXTI2);
+    
     line_freq = timer_get_counter(TIM1);
 
     // Change ouput polarity if needed depending on leading edge mode
-    brightness_adj = leading_edge ? 1000 - brightness : brightness;
+    brightness = leading_edge ? 1000 - brightness_req : brightness_req;
 
-    // Adjust the brigtness value so we will always be fully on when the
-    // requested value is 1000
-    brightness_adj = brightness_adj * line_freq / 1000 * 1.02;
+    // Adjust the brigtness value according to the mains frequency
+    brightness_adj = brightness * line_freq / 1000;
     timer_set_oc_value(TIM1, TIM_OC1, brightness_adj);
     timer_set_oc_value(TIM1, TIM_OC4, brightness_adj);
     timer_set_counter(TIM1, 0);
 
+    // No need to turn on if brightness is zero
+    if (brightness == 0)
+        return;
+
+    // Turn on the MOSFETs
     if(leading_edge != (bool)hw_version)
     {
         gpio_set(GPIOA, GPIO8);
@@ -728,7 +741,4 @@ void exti2_3_isr(void)
         gpio_clear(GPIOA, GPIO11);
         gpio_clear(GPIOA, GPIO12);
     }
-
-    // Reset interupt request
-    exti_reset_request(EXTI2);
 }
