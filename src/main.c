@@ -23,6 +23,7 @@
 #include <libopencm3/stm32/usart.h>
 #include <libopencm3/stm32/timer.h>
 #include <libopencm3/stm32/exti.h>
+#include <libopencm3/stm32/adc.h>
 #include <libopencm3/cm3/nvic.h>
 #include <libopencm3/cm3/systick.h>
 
@@ -52,6 +53,8 @@
 #define SHD_CF1_PULSE_TIMEOUT               10000
 #define SHD_CF1_PULSE_MIN                   1
 #define SHD_CF1_PULSE_MAX                   1000
+
+#define ADC_NUM_CHANNELS 3
 
 typedef int32_t ring_size_t;
 
@@ -94,6 +97,14 @@ static uint16_t brightness_req              = 0;
 static uint32_t brightness_adj              = 0;
 static bool     leading_edge                = false;
 
+static uint16_t adc_data[ADC_NUM_CHANNELS]  = {0};
+static uint8_t  adc_channel                 = 0;
+static uint8_t  adc_channels[ADC_NUM_CHANNELS] =
+    {
+        ADC_CHANNEL_TEMP,   // CurrentSense
+        5,                  // ADC_CHANNEL5 - Live pin sense
+        8,                  // ADC_CHANNEL8 - Current sense
+    };
 
 static void ring_init(struct ring *ring, uint8_t *buf, ring_size_t size)
 {
@@ -260,26 +271,51 @@ static void check_cf1_signal(void)
 
 static uint32_t get_current(void)
 {
-    // Power measurements are more sensitive to switch offs,
-    // so we first check if power is 0 to set current_pulse_width to 0 too
-    if (power_pulse_width == 0)
-        current_pulse_width = 0;
-    else
-        check_cf1_signal();
+    if (hw_version == 1)
+    {
+        // Power measurements are more sensitive to switch offs,
+        // so we first check if power is 0 to set current_pulse_width to 0 too
+        if (power_pulse_width == 0)
+            current_pulse_width = 0;
+        else
+            check_cf1_signal();
 
-    return current_pulse_width;
+        return current_pulse_width;
+    }
+    else
+    {
+        // Todo(jamesturton): Fix these magic numbers!
+        return adc_data[2] - 1979;
+        // return (1448 * 644) / (float)(adc_data[2] - 1979);
+    }
 }
 
 static uint32_t get_voltage(void)
 {
-    check_cf1_signal();
-    return voltage_pulse_width;
+    if (hw_version == 1)
+    {
+        check_cf1_signal();
+        return voltage_pulse_width;
+    }
+    else
+    {
+        // Todo(jamesturton): Fix these magic numbers!
+        return (347800 * 9) / (float)adc_data[1];
+    }
 }
 
 static uint32_t get_active_power(void)
 {
-    check_cf_signal();
-    return power_pulse_width;
+    if (hw_version == 1)
+    {
+        check_cf_signal();
+        return power_pulse_width;
+    }
+    else
+    {
+        // Todo(jamesturton): Fix these magic numbers!
+        return ((float)880373 * (float)9 * (float)644) / (float)((float)adc_data[1] * (float)(adc_data[2] - 1979));
+    }
 }
 
 static void generate_reply(void)
@@ -418,6 +454,9 @@ static void clock_setup(void)
 
     // Enable clocks for EXTI
     rcc_periph_clock_enable(RCC_SYSCFG_COMP);
+
+    // Enable clocks for ADC1
+    rcc_periph_clock_enable(RCC_ADC1);
 }
 
 static void usart_setup(void)
@@ -453,7 +492,7 @@ static void usart_setup(void)
 static void gpio_setup(void)
 {
     // Setup GPIO pins for hw version detect
-    gpio_mode_setup(GPIOA, GPIO_MODE_INPUT, GPIO_PUPD_NONE, GPIO3);
+    gpio_mode_setup(GPIOB, GPIO_MODE_INPUT, GPIO_PUPD_NONE, GPIO1);
     hw_version = gpio_get(GPIOB, GPIO1);
 
     // Setup GPIO pins for MOSFET outputs on both HW1 and HW2
@@ -461,7 +500,7 @@ static void gpio_setup(void)
                     GPIO8 | GPIO11 | GPIO12);
 
     // Setup GPIO pins for test pads
-    gpio_mode_setup(GPIOA, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO6 | GPIO7);
+    // gpio_mode_setup(GPIOA, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO6 | GPIO7);
 
     // Setup GPIO pins for PWM inputs from HLW8012 as TIM2_CH1 and TIM2_CH2
     // alternate functions
@@ -476,6 +515,12 @@ static void gpio_setup(void)
 
     // Setup GPIO pins for mains detect pin
     gpio_mode_setup(GPIOB, GPIO_MODE_INPUT, GPIO_PUPD_NONE, GPIO2);
+
+    // Setup analog GPIO pins
+    gpio_mode_setup(GPIOA, GPIO_MODE_ANALOG, GPIO_PUPD_NONE, GPIO5);
+    gpio_mode_setup(GPIOA, GPIO_MODE_ANALOG, GPIO_PUPD_NONE, GPIO7);
+    gpio_mode_setup(GPIOB, GPIO_MODE_ANALOG, GPIO_PUPD_NONE, GPIO0);
+    gpio_mode_setup(GPIOB, GPIO_MODE_ANALOG, GPIO_PUPD_NONE, GPIO1);
 }
 
 static void systick_setup(void)
@@ -521,6 +566,7 @@ static void timer1_setup(void)
     timer_set_period(TIM1, 65535);
 
     timer_enable_irq(TIM1, TIM_DIER_CC1IE);
+    timer_enable_irq(TIM1, TIM_DIER_CC2IE);
 
     // Finally enable timer 1
     timer_enable_counter(TIM1);
@@ -586,6 +632,31 @@ static void exti_setup(void)
     exti_enable_request(EXTI2);
 }
 
+static void adc_setup(void)
+{
+    uint8_t channel_array[16];
+    channel_array[0] = adc_channels[adc_channel];
+
+    adc_power_off(ADC1);
+    adc_set_clk_source(ADC1, ADC_CLKSOURCE_ADC);
+    adc_calibrate(ADC1);
+    adc_set_operation_mode(ADC1, ADC_MODE_SCAN);
+    adc_disable_external_trigger_regular(ADC1);
+    adc_set_right_aligned(ADC1);
+    adc_enable_temperature_sensor();
+    adc_set_sample_time_on_all_channels(ADC1, ADC_SMPTIME_071DOT5);
+    adc_set_regular_sequence(ADC1, 1, channel_array);
+    adc_set_resolution(ADC1, ADC_RESOLUTION_12BIT);
+    adc_disable_analog_watchdog(ADC1);
+    adc_power_on(ADC1);
+
+    // Wait for ADC starting up
+    for (int i = 0; i < 800000; i++)
+        __asm__("nop");
+
+    adc_start_conversion_regular(ADC1);
+}
+
 int main(void)
 {
     // Setup all subsystems
@@ -593,6 +664,8 @@ int main(void)
     clock_setup();
     // Setup GPIO input and output modes
     gpio_setup();
+    // Setup ADC for measuring voltage/current on HW 2
+    adc_setup();
     // Setup UART for comunication with ESP8266
     usart_setup();
     // Setup timer 1 for PWM outout controling output MOSFETs
@@ -706,14 +779,42 @@ void tim1_cc_isr(void)
             gpio_set(GPIOA, GPIO12);
         }
     }
+    if (timer_get_flag(TIM1, TIM_SR_CC2IF))
+    {
+        // Reset interupt flag
+        timer_clear_flag(TIM1, TIM_SR_CC2IF);
+
+        // Check if ADC has finished converting
+        if (adc_eoc(ADC1))
+        {
+            adc_data[adc_channel] = adc_read_regular(ADC1);
+            
+            adc_channel++;
+            if (adc_channel >= ADC_NUM_CHANNELS)
+                adc_channel = 0;
+
+            uint8_t channel_array[16];
+            channel_array[0] = adc_channels[adc_channel];
+
+            adc_power_off(ADC1);
+            adc_set_regular_sequence(ADC1, 1, channel_array);
+            adc_power_on(ADC1);
+        }
+        else if (!gpio_get(GPIOB, GPIO2))
+        {
+            adc_start_conversion_regular(ADC1);
+        }
+        
+    }
 }
 
 void exti2_3_isr(void)
 {
     // Reset interupt request
     exti_reset_request(EXTI2);
-    
+
     line_freq = timer_get_counter(TIM1);
+    timer_set_oc_value(TIM1, TIM_OC2, line_freq / 2);
 
     // Change ouput polarity if needed depending on leading edge mode
     brightness = leading_edge ? 1000 - brightness_req : brightness_req;
@@ -721,7 +822,6 @@ void exti2_3_isr(void)
     // Adjust the brigtness value according to the mains frequency
     brightness_adj = brightness * line_freq / 1000;
     timer_set_oc_value(TIM1, TIM_OC1, brightness_adj);
-    timer_set_oc_value(TIM1, TIM_OC4, brightness_adj);
     timer_set_counter(TIM1, 0);
 
     // No need to turn on if brightness is zero
