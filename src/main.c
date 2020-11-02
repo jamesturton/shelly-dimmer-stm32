@@ -24,6 +24,7 @@
 #include <libopencm3/stm32/timer.h>
 #include <libopencm3/stm32/exti.h>
 #include <libopencm3/stm32/adc.h>
+#include <libopencm3/stm32/dma.h>
 #include <libopencm3/cm3/nvic.h>
 #include <libopencm3/cm3/systick.h>
 
@@ -54,7 +55,7 @@
 #define SHD_CF1_PULSE_MIN                   1
 #define SHD_CF1_PULSE_MAX                   1000
 
-#define ADC_NUM_CHANNELS 3
+#define ADC_NUM_CHANNELS                    2
 
 typedef int32_t ring_size_t;
 
@@ -98,10 +99,8 @@ static uint32_t brightness_adj              = 0;
 static bool     leading_edge                = false;
 
 static uint16_t adc_data[ADC_NUM_CHANNELS]  = {0};
-static uint8_t  adc_channel                 = 0;
 static uint8_t  adc_channels[ADC_NUM_CHANNELS] =
     {
-        ADC_CHANNEL_TEMP,   // CurrentSense
         5,                  // ADC_CHANNEL5 - Live pin sense
         8,                  // ADC_CHANNEL8 - Current sense
     };
@@ -285,8 +284,10 @@ static uint32_t get_current(void)
     else
     {
         // Todo(jamesturton): Fix these magic numbers!
-        return adc_data[2] - 1979;
-        // return (1448 * 644) / (float)(adc_data[2] - 1979);
+        if (adc_data[1] == 0)
+            return 0;
+        else
+            return (1448 * 644) / (float)(adc_data[1] - 1979);
     }
 }
 
@@ -300,7 +301,10 @@ static uint32_t get_voltage(void)
     else
     {
         // Todo(jamesturton): Fix these magic numbers!
-        return (347800 * 9) / (float)adc_data[1];
+        if (adc_data[0] == 0)
+            return 0;
+        else
+            return (347800 * 9) / (float)adc_data[0];
     }
 }
 
@@ -314,7 +318,10 @@ static uint32_t get_active_power(void)
     else
     {
         // Todo(jamesturton): Fix these magic numbers!
-        return ((float)880373 * (float)9 * (float)644) / (float)((float)adc_data[1] * (float)(adc_data[2] - 1979));
+        if ((adc_data[0] == 0) || (adc_data[1] == 0))
+            return 0;
+        else
+            return ((float)880373 * (float)9 * (float)644) / (float)((float)adc_data[0] * (float)(adc_data[1] - 1979));
     }
 }
 
@@ -457,6 +464,9 @@ static void clock_setup(void)
 
     // Enable clocks for ADC1
     rcc_periph_clock_enable(RCC_ADC1);
+
+    // Enable clocks for DMA
+    rcc_periph_clock_enable(RCC_DMA);
 }
 
 static void usart_setup(void)
@@ -634,27 +644,42 @@ static void exti_setup(void)
 
 static void adc_setup(void)
 {
-    uint8_t channel_array[16];
-    channel_array[0] = adc_channels[adc_channel];
-
     adc_power_off(ADC1);
-    adc_set_clk_source(ADC1, ADC_CLKSOURCE_ADC);
-    adc_calibrate(ADC1);
-    adc_set_operation_mode(ADC1, ADC_MODE_SCAN);
+
+    // adc_set_clk_source(ADC1, ADC_CLKSOURCE_ADC);
+    // adc_calibrate(ADC1);
+    // adc_set_operation_mode(ADC1, ADC_MODE_SCAN);
+    adc_set_single_conversion_mode(ADC1);
     adc_disable_external_trigger_regular(ADC1);
     adc_set_right_aligned(ADC1);
     adc_enable_temperature_sensor();
     adc_set_sample_time_on_all_channels(ADC1, ADC_SMPTIME_071DOT5);
-    adc_set_regular_sequence(ADC1, 1, channel_array);
+    adc_set_regular_sequence(ADC1, ADC_NUM_CHANNELS, adc_channels);
     adc_set_resolution(ADC1, ADC_RESOLUTION_12BIT);
     adc_disable_analog_watchdog(ADC1);
+
+    adc_calibrate(ADC1);
+
+    // Configure DMA for ADC
+    // nvic_enable_irq(NVIC_DMA1_CHANNEL1_IRQ);
+
+    dma_channel_reset(DMA1, DMA_CHANNEL1);
+    dma_set_priority(DMA1, DMA_CHANNEL1, DMA_CCR_PL_LOW);
+    dma_set_memory_size(DMA1, DMA_CHANNEL1, DMA_CCR_MSIZE_16BIT);
+    dma_set_peripheral_size(DMA1, DMA_CHANNEL1, DMA_CCR_PSIZE_16BIT);
+    dma_enable_memory_increment_mode(DMA1, DMA_CHANNEL1);
+    dma_enable_circular_mode(DMA1, DMA_CHANNEL1);
+    dma_set_read_from_peripheral(DMA1, DMA_CHANNEL1);
+    dma_set_peripheral_address(DMA1, DMA_CHANNEL1, (uint32_t) &ADC1_DR);
+    // The array adc_data[] is filled with the waveform data to be output
+    dma_set_memory_address(DMA1, DMA_CHANNEL1, (uint32_t) adc_data);
+    dma_set_number_of_data(DMA1, DMA_CHANNEL1, ADC_NUM_CHANNELS);
+    // dma_enable_transfer_complete_interrupt(DMA1, DMA_CHANNEL1);
+    dma_enable_channel(DMA1, DMA_CHANNEL1);
+
+    adc_enable_dma(ADC1);
+
     adc_power_on(ADC1);
-
-    // Wait for ADC starting up
-    for (int i = 0; i < 800000; i++)
-        __asm__("nop");
-
-    adc_start_conversion_regular(ADC1);
 }
 
 int main(void)
@@ -785,20 +810,9 @@ void tim1_cc_isr(void)
         timer_clear_flag(TIM1, TIM_SR_CC2IF);
 
         // Check if ADC has finished converting
-        if (adc_eoc(ADC1))
+        if (dma_get_interrupt_flag(DMA1, DMA_CHANNEL1, DMA_TCIF))
         {
-            adc_data[adc_channel] = adc_read_regular(ADC1);
-            
-            adc_channel++;
-            if (adc_channel >= ADC_NUM_CHANNELS)
-                adc_channel = 0;
-
-            uint8_t channel_array[16];
-            channel_array[0] = adc_channels[adc_channel];
-
-            adc_power_off(ADC1);
-            adc_set_regular_sequence(ADC1, 1, channel_array);
-            adc_power_on(ADC1);
+            dma_clear_interrupt_flags(DMA1, DMA_CHANNEL1, DMA_TCIF);
         }
         else if (!gpio_get(GPIOB, GPIO2))
         {
