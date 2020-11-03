@@ -101,9 +101,19 @@ static bool     leading_edge                = false;
 static uint16_t adc_data[ADC_NUM_CHANNELS]  = {0};
 static uint8_t  adc_channels[ADC_NUM_CHANNELS] =
     {
-        5,                  // ADC_CHANNEL5 - Live pin sense
+        3,                  // ADC_CHANNEL3 - Live pin sense
         8,                  // ADC_CHANNEL8 - Current sense
     };
+
+static uint16_t adc_count                   = 0;
+static uint16_t current_max                 = 0;
+static uint16_t current_max_period          = 0;
+static uint32_t current_total               = 0;
+static float    current_total_mag_period    = 0;
+static uint32_t current_total_mag           = 0;
+static uint16_t voltage_max                 = 0;
+static uint16_t voltage_max_period          = 0;
+static uint32_t voltage_total               = 0;
 
 static void ring_init(struct ring *ring, uint8_t *buf, ring_size_t size)
 {
@@ -287,7 +297,7 @@ static uint32_t get_current(void)
         if (adc_data[1] == 0)
             return 0;
         else
-            return (1448 * 644) / (float)(adc_data[1] - 1979);
+            return (1448 * 556) / (float)current_total_mag_period;
     }
 }
 
@@ -304,7 +314,7 @@ static uint32_t get_voltage(void)
         if (adc_data[0] == 0)
             return 0;
         else
-            return (347800 * 9) / (float)adc_data[0];
+            return (347800 * 15.5) / (float)voltage_max_period;
     }
 }
 
@@ -321,7 +331,7 @@ static uint32_t get_active_power(void)
         if ((adc_data[0] == 0) || (adc_data[1] == 0))
             return 0;
         else
-            return ((float)880373 * (float)9 * (float)644) / (float)((float)adc_data[0] * (float)(adc_data[1] - 1979));
+            return ((float)880373 * (float)15.5 * (float)556) / (float)((float)voltage_max_period * (float)current_total_mag_period);
     }
 }
 
@@ -455,9 +465,10 @@ static void clock_setup(void)
     // Enable clocks for USART1
     rcc_periph_clock_enable(RCC_USART1);
 
-    // Enable clocks for TIM1 and TIM2
+    // Enable clocks for TIM1, TIM2 and TIM3
     rcc_periph_clock_enable(RCC_TIM1);
     rcc_periph_clock_enable(RCC_TIM2);
+    rcc_periph_clock_enable(RCC_TIM3);
 
     // Enable clocks for EXTI
     rcc_periph_clock_enable(RCC_SYSCFG_COMP);
@@ -527,10 +538,8 @@ static void gpio_setup(void)
     gpio_mode_setup(GPIOB, GPIO_MODE_INPUT, GPIO_PUPD_NONE, GPIO2);
 
     // Setup analog GPIO pins
-    gpio_mode_setup(GPIOA, GPIO_MODE_ANALOG, GPIO_PUPD_NONE, GPIO5);
-    gpio_mode_setup(GPIOA, GPIO_MODE_ANALOG, GPIO_PUPD_NONE, GPIO7);
-    gpio_mode_setup(GPIOB, GPIO_MODE_ANALOG, GPIO_PUPD_NONE, GPIO0);
-    gpio_mode_setup(GPIOB, GPIO_MODE_ANALOG, GPIO_PUPD_NONE, GPIO1);
+    gpio_mode_setup(GPIOA, GPIO_MODE_ANALOG, GPIO_PUPD_NONE, GPIO3); // ADC_IN3
+    gpio_mode_setup(GPIOB, GPIO_MODE_ANALOG, GPIO_PUPD_NONE, GPIO0); // ADC_IN8
 }
 
 static void systick_setup(void)
@@ -542,7 +551,7 @@ static void systick_setup(void)
     STK_CVR = 0;
 
     // Divide systick clock down to milliseconds
-    systick_set_reload(rcc_ahb_frequency / 8 / 1000);
+    systick_set_reload(rcc_ahb_frequency / 8 / 10000);
 
     // Enable systick interrupt
     systick_interrupt_enable();
@@ -576,7 +585,6 @@ static void timer1_setup(void)
     timer_set_period(TIM1, 65535);
 
     timer_enable_irq(TIM1, TIM_DIER_CC1IE);
-    timer_enable_irq(TIM1, TIM_DIER_CC2IE);
 
     // Finally enable timer 1
     timer_enable_counter(TIM1);
@@ -629,6 +637,35 @@ static void timer2_setup(void)
     timer_enable_counter(TIM2);
 }
 
+static void timer3_setup(void)
+{
+    // Disable and reset timer 3
+    timer_disable_counter(TIM3);
+    rcc_periph_reset_pulse(RST_TIM3);
+
+    // Enable timer 3 interupt
+    nvic_enable_irq(NVIC_TIM3_IRQ);
+
+    // Initialise timer 3 as up counting on clock edge
+    timer_set_mode(TIM3, TIM_CR1_CKD_CK_INT, TIM_CR1_CMS_EDGE, TIM_CR1_DIR_UP);
+
+    // Divide systick clock down to 100 kHz
+    timer_set_prescaler(TIM3, 480);
+
+    // Configure timer 3 with preload and continuous mode
+    timer_enable_preload(TIM3);
+    timer_continuous_mode(TIM3);
+    timer_set_period(TIM3, 10);
+    timer_set_oc_value(TIM3, TIM_OC1, 5);
+
+    // timer_set_master_mode(TIM3, TIM_CR2_MMS_UPDATE);
+
+    timer_enable_irq(TIM3, TIM_DIER_CC1IE);
+
+    // Finally enable timer 3
+    timer_enable_counter(TIM3);
+}
+
 static void exti_setup(void)
 {
     // Enable external interrupt 2
@@ -646,11 +683,11 @@ static void adc_setup(void)
 {
     adc_power_off(ADC1);
 
-    // adc_set_clk_source(ADC1, ADC_CLKSOURCE_ADC);
-    // adc_calibrate(ADC1);
-    // adc_set_operation_mode(ADC1, ADC_MODE_SCAN);
+    adc_set_operation_mode(ADC1, ADC_MODE_SCAN);
     adc_set_single_conversion_mode(ADC1);
     adc_disable_external_trigger_regular(ADC1);
+    // TRG1 = TIM1_CC4
+    // adc_enable_external_trigger_regular(ADC1, ADC_CFGR1_EXTSEL_VAL(3), ADC_CFGR1_EXTEN_RISING_EDGE);
     adc_set_right_aligned(ADC1);
     adc_enable_temperature_sensor();
     adc_set_sample_time_on_all_channels(ADC1, ADC_SMPTIME_071DOT5);
@@ -680,6 +717,8 @@ static void adc_setup(void)
     adc_enable_dma(ADC1);
 
     adc_power_on(ADC1);
+
+    adc_start_conversion_regular(ADC1);
 }
 
 int main(void)
@@ -697,6 +736,8 @@ int main(void)
     timer1_setup();
     // Setup timer 2 for measuring voltage/power data from HLW8012
     timer2_setup();
+    // Setup timer 3 for measuring voltage/current data ADC
+    timer3_setup();
     // Setup external trigger for synchronising PWM output with zero-crossing
     // point of mains voltage
     exti_setup();
@@ -712,6 +753,39 @@ int main(void)
 
 
 // Interupts
+
+void sys_tick_handler(void)
+{
+    // Increment systick value
+    systick_ms++;
+}
+
+void tim1_cc_isr(void)
+{
+    if (timer_get_flag(TIM1, TIM_SR_CC1IF))
+    {
+        // Reset interupt flag
+        timer_clear_flag(TIM1, TIM_SR_CC1IF);
+
+        // No need to turn off if brightness is full
+        if (brightness == 1000)
+            return;
+
+        // Turn off the MOSFETs
+        if(leading_edge != (bool)hw_version)
+        {
+            gpio_clear(GPIOA, GPIO8);
+            gpio_clear(GPIOA, GPIO11);
+            gpio_clear(GPIOA, GPIO12);
+        }
+        else
+        {
+            gpio_set(GPIOA, GPIO8);
+            gpio_set(GPIOA, GPIO11);
+            gpio_set(GPIOA, GPIO12);
+        }
+    }
+}
 
 void tim2_isr(void)
 {
@@ -773,52 +847,29 @@ void tim2_isr(void)
     }
 }
 
-void sys_tick_handler(void)
+void tim3_isr(void)
 {
-    // Increment systick value
-    systick_ms++;
-}
-
-void tim1_cc_isr(void)
-{
-    if (timer_get_flag(TIM1, TIM_SR_CC1IF))
+    // Check if capture/compare interrupt triggered
+    if (timer_get_flag(TIM3, TIM_SR_CC1IF))
     {
         // Reset interupt flag
-        timer_clear_flag(TIM1, TIM_SR_CC1IF);
-
-        // No need to turn off if brightness is full
-        if (brightness == 1000)
-            return;
-
-        // Turn off the MOSFETs
-        if(leading_edge != (bool)hw_version)
-        {
-            gpio_clear(GPIOA, GPIO8);
-            gpio_clear(GPIOA, GPIO11);
-            gpio_clear(GPIOA, GPIO12);
-        }
-        else
-        {
-            gpio_set(GPIOA, GPIO8);
-            gpio_set(GPIOA, GPIO11);
-            gpio_set(GPIOA, GPIO12);
-        }
-    }
-    if (timer_get_flag(TIM1, TIM_SR_CC2IF))
-    {
-        // Reset interupt flag
-        timer_clear_flag(TIM1, TIM_SR_CC2IF);
+        timer_clear_flag(TIM3, TIM_SR_CC1IF);
 
         // Check if ADC has finished converting
         if (dma_get_interrupt_flag(DMA1, DMA_CHANNEL1, DMA_TCIF))
         {
             dma_clear_interrupt_flags(DMA1, DMA_CHANNEL1, DMA_TCIF);
-        }
-        else if (!gpio_get(GPIOB, GPIO2))
-        {
+
+            voltage_total += adc_data[0];
+            current_total += adc_data[1];
+            if (adc_data[1] > current_max_period)
+                current_total_mag += adc_data[1] - current_max_period;
+            else
+                current_total_mag += current_max_period - adc_data[1];
+            adc_count++;
+
             adc_start_conversion_regular(ADC1);
         }
-        
     }
 }
 
@@ -828,7 +879,19 @@ void exti2_3_isr(void)
     exti_reset_request(EXTI2);
 
     line_freq = timer_get_counter(TIM1);
-    timer_set_oc_value(TIM1, TIM_OC2, line_freq / 2);
+    // timer_set_oc_value(TIM3, TIM_OC1, line_freq / 2);
+
+    // Update only once per full line cycle
+    if (gpio_get(GPIOB, GPIO2))
+    {
+        current_max_period = current_total / adc_count;
+        current_total = 0;
+        current_total_mag_period = current_total_mag / adc_count;
+        current_total_mag = 0;
+        voltage_max_period = voltage_total / adc_count;
+        voltage_total = 0;
+        adc_count = 0;
+    }
 
     // Change ouput polarity if needed depending on leading edge mode
     brightness = leading_edge ? 1000 - brightness_req : brightness_req;
