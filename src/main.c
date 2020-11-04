@@ -29,7 +29,7 @@
 #include <libopencm3/cm3/systick.h>
 
 #define SHD_DRIVER_MAJOR_VERSION            51
-#define SHD_DRIVER_MINOR_VERSION            2
+#define SHD_DRIVER_MINOR_VERSION            3
 
 #define SHD_SWITCH_CMD                      0x01
 #define SHD_SWITCH_FADE_CMD                 0x02
