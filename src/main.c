@@ -92,7 +92,15 @@ static uint32_t power_pulse_width           = 0;
 static uint32_t power_pulse_count           = 0;
 static bool     current_mode                = false;
 
-static uint8_t  hw_version                  = 0;
+typedef enum
+{
+    dimmer1,
+    dimmer2,
+}
+hw_types;
+
+static hw_types hw_version                  = dimmer2;
+
 static uint16_t brightness                  = 0;
 static uint16_t brightness_req              = 0;
 static uint32_t brightness_adj              = 0;
@@ -100,10 +108,10 @@ static bool     leading_edge                = false;
 
 static uint16_t adc_data[ADC_NUM_CHANNELS]  = {0};
 static uint8_t  adc_channels[ADC_NUM_CHANNELS] =
-    {
-        3,                  // ADC_CHANNEL3 - Live pin sense
-        8,                  // ADC_CHANNEL8 - Current sense
-    };
+{
+    3,                  // ADC_CHANNEL3 - Live pin sense
+    8,                  // ADC_CHANNEL8 - Current sense
+};
 
 static uint16_t adc_count                   = 0;
 static uint16_t current_max                 = 0;
@@ -280,7 +288,7 @@ static void check_cf1_signal(void)
 
 static uint32_t get_current(void)
 {
-    if (hw_version == 1)
+    if (hw_version == dimmer1)
     {
         // Power measurements are more sensitive to switch offs,
         // so we first check if power is 0 to set current_pulse_width to 0 too
@@ -303,7 +311,7 @@ static uint32_t get_current(void)
 
 static uint32_t get_voltage(void)
 {
-    if (hw_version == 1)
+    if (hw_version == dimmer1)
     {
         check_cf1_signal();
         return voltage_pulse_width;
@@ -320,7 +328,7 @@ static uint32_t get_voltage(void)
 
 static uint32_t get_active_power(void)
 {
-    if (hw_version == 1)
+    if (hw_version == dimmer1)
     {
         check_cf_signal();
         return power_pulse_width;
@@ -365,7 +373,7 @@ static void generate_reply(void)
     case SHD_POLL_CMD:
         {
             len      = 17;
-            data[0]  = 0;                       // ??
+            data[0]  = hw_version;              // ??
             data[1]  = 0;                       // ??
             data[2]  = brightness_req & 0xff;   // brightness
             data[3]  = brightness_req >> 8;     // brightness
@@ -381,7 +389,7 @@ static void generate_reply(void)
             data[13] = current >> 8;            // current
             data[14] = current >> 16;           // current
             data[15] = current >> 24;           // current
-            data[16] = leading_edge;            // fade rate
+            data[16] = leading_edge;            // leading edge
         }
         break;
 
@@ -512,10 +520,6 @@ static void usart_setup(void)
 
 static void gpio_setup(void)
 {
-    // Setup GPIO pins for hw version detect
-    gpio_mode_setup(GPIOB, GPIO_MODE_INPUT, GPIO_PUPD_NONE, GPIO1);
-    hw_version = gpio_get(GPIOB, GPIO1);
-
     // Setup GPIO pins for MOSFET outputs on both HW1 and HW2
     gpio_mode_setup(GPIOA, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE,
                     GPIO8 | GPIO11 | GPIO12);
@@ -772,7 +776,7 @@ void tim1_cc_isr(void)
             return;
 
         // Turn off the MOSFETs
-        if(leading_edge != (bool)hw_version)
+        if(leading_edge != (bool)(hw_version == dimmer1))
         {
             gpio_clear(GPIOA, GPIO8);
             gpio_clear(GPIOA, GPIO11);
@@ -795,6 +799,8 @@ void tim2_isr(void)
         // CF1 triggered
         // Reset interupt flag
         timer_clear_flag(TIM2, TIM_SR_CC1IF);
+
+        hw_version = dimmer1;
 
         // Calculate period of CF1 signal
         tim_ccr1_now = TIM_CCR1(TIM2);
@@ -906,7 +912,7 @@ void exti2_3_isr(void)
         return;
 
     // Turn on the MOSFETs
-    if(leading_edge != (bool)hw_version)
+    if(leading_edge != (bool)(hw_version == dimmer1))
     {
         gpio_set(GPIOA, GPIO8);
         gpio_set(GPIOA, GPIO11);
