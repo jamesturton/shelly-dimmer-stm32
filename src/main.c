@@ -29,7 +29,7 @@
 #include <libopencm3/cm3/systick.h>
 
 #define SHD_DRIVER_MAJOR_VERSION            51
-#define SHD_DRIVER_MINOR_VERSION            3
+#define SHD_DRIVER_MINOR_VERSION            4
 
 #define SHD_SWITCH_CMD                      0x01
 #define SHD_SWITCH_FADE_CMD                 0x02
@@ -529,7 +529,7 @@ static void gpio_setup(void)
 
     // Setup GPIO pins for PWM inputs from HLW8012 as TIM2_CH1 and TIM2_CH2
     // alternate functions
-    gpio_mode_setup(GPIOA, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO0 | GPIO1);
+    gpio_mode_setup(GPIOA, GPIO_MODE_AF, GPIO_PUPD_PULLDOWN, GPIO0 | GPIO1);
     gpio_set_af(GPIOA, GPIO_AF2, GPIO0 | GPIO1);
 
     // Setup GPIO pins for SEL pin on HLW8012
