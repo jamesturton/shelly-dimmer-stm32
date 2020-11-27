@@ -77,6 +77,7 @@ static uint8_t  cmd                         = 0;
 
 static uint32_t systick_ms                  = 0;
 static uint32_t line_freq                   = 1000; // Guess we are at 50 Hz
+static uint32_t line_freq_counter           = 0;
 
 static uint32_t tim_ccr1_now                = 0;
 static uint32_t tim_ccr1_last               = 0;
@@ -884,8 +885,10 @@ void exti2_3_isr(void)
     // Reset interupt request
     exti_reset_request(EXTI2);
 
-    if (!gpio_get(GPIOB, GPIO2))
-        line_freq = timer_get_counter(TIM1);
+    if (gpio_get(GPIOB, GPIO2))
+        line_freq_counter = timer_get_counter(TIM1);
+    else
+        line_freq = (line_freq_counter + timer_get_counter(TIM1)) / 2;
 
     // Update only once per full line cycle
     if (gpio_get(GPIOB, GPIO2))
