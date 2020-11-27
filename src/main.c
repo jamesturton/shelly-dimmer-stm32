@@ -29,7 +29,7 @@
 #include <libopencm3/cm3/systick.h>
 
 #define SHD_DRIVER_MAJOR_VERSION            51
-#define SHD_DRIVER_MINOR_VERSION            4
+#define SHD_DRIVER_MINOR_VERSION            5
 
 #define SHD_SWITCH_CMD                      0x01
 #define SHD_SWITCH_FADE_CMD                 0x02
@@ -76,7 +76,7 @@ static uint8_t  id                          = 0;
 static uint8_t  cmd                         = 0;
 
 static uint32_t systick_ms                  = 0;
-static uint32_t line_freq                   = 10000; // Guess we are at 50 Hz
+static uint32_t line_freq                   = 1000; // Guess we are at 50 Hz
 
 static uint32_t tim_ccr1_now                = 0;
 static uint32_t tim_ccr1_last               = 0;
@@ -539,7 +539,7 @@ static void gpio_setup(void)
     gpio_set(GPIOB, GPIO8);
 
     // Setup GPIO pins for mains detect pin
-    gpio_mode_setup(GPIOB, GPIO_MODE_INPUT, GPIO_PUPD_NONE, GPIO2);
+    gpio_mode_setup(GPIOB, GPIO_MODE_INPUT, GPIO_PUPD_PULLDOWN, GPIO2);
 
     // Setup analog GPIO pins
     gpio_mode_setup(GPIOA, GPIO_MODE_ANALOG, GPIO_PUPD_NONE, GPIO3); // ADC_IN3
@@ -884,8 +884,8 @@ void exti2_3_isr(void)
     // Reset interupt request
     exti_reset_request(EXTI2);
 
-    line_freq = timer_get_counter(TIM1);
-    // timer_set_oc_value(TIM3, TIM_OC1, line_freq / 2);
+    if (!gpio_get(GPIOB, GPIO2))
+        line_freq = timer_get_counter(TIM1);
 
     // Update only once per full line cycle
     if (gpio_get(GPIOB, GPIO2))
