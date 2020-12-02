@@ -7,7 +7,7 @@ See the [releases](https://github.com/jamesturton/shelly-dimmer-stm32/releases) 
 
 # Instructions
 
-Super easy way hit [![Gitpod Ready-to-Code](https://img.shields.io/badge/Gitpod-Ready--to--Code-blue?logo=gitpod)](https://github.com/jamesturton/shelly-dimmer-stm32) and you did it.
+Super easy way hit [![Gitpod Ready-to-Code](https://img.shields.io/badge/Gitpod-Ready--to--Code-blue?logo=gitpod)](https://gitpod.io/#https://github.com/jamesturton/shelly-dimmer-stm32) and you did it.
 
 for building local on your PC do:
 
