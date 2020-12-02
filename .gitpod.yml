@@ -1,0 +1,4 @@
+tasks:
+  - command: git clone --recurse-submodules https://github.com/jamesturton/shelly-dimmer-stm32.git && cd shelly-dimmer-stm32 && make -C libopencm3 && make -C src
+image:
+  file: .gitpod.Dockerfile
