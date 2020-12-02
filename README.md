@@ -18,12 +18,6 @@ To flash the firmware directly to the STM32 chip using a programmer such as the 
 
  5. ```make -C src flash BMP_PORT=/dev/ttyBmpGdb```
 
- To convert the binary firmware file to a header file for use in Tasmota firmware use the ```binary-parser``` utility in tthe ```scripts``` directory:
-
- 6. ```gcc scripts/binary-parser.c -o scripts/binary-parser```
- 7. ```chmod +x scripts/binary-parser```
- 8. ```scripts/binary-parser src/shelly-dimmer-stm32.bin shelly-dimmer-stm32.h 50 1```
-
 # Pinout
 Here is a guess of the pinout of the *STM32F031K6* chip.
 
