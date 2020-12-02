@@ -6,6 +6,11 @@ An open-source firmware for the STM32 co-processor on the Shelly Dimmer.
 See the [releases](https://github.com/jamesturton/shelly-dimmer-stm32/releases) page to download the latest pre-build binary.
 
 # Instructions
+
+Super easy way hit [![Gitpod Ready-to-Code](https://img.shields.io/badge/Gitpod-Ready--to--Code-blue?logo=gitpod)](https://github.com/jamesturton/shelly-dimmer-stm32) and you did it.
+
+for building local on your PC do:
+
  1. ```git clone --recurse-submodules https://github.com/jamesturton/shelly-dimmer-stm32.git```
  2. ```cd shelly-dimmer-stm32```
  3. ```make -C libopencm3 # (Only needed once)```
