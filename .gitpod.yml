@@ -1,0 +1,4 @@
+tasks:
+  - command: make -C libopencm3 && make -C src
+image:
+  file: .gitpod.Dockerfile
