@@ -3,6 +3,14 @@ An open-source firmware for the STM32 co-processor on the Shelly Dimmer and Shel
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Gitpod Ready-to-Code](https://img.shields.io/badge/Gitpod-Ready--to--Code-blue?logo=gitpod)](https://gitpod.io/#https://github.com/jamesturton/shelly-dimmer-stm32)
 
+# Disclaimer
+
+:warning: **DANGER OF ELECTROCUTION** :warning:
+
+The Shelly Dimmer 1 and Shelly Dimmer 2 connect to mains electricity (AC power), therefore there is danger of electrocution if not installed properly. If you don't know how to install it, please call an electrician (***Beware:*** certain countries prohibit installation without a licensed electrician present). Remember: _**SAFETY FIRST**_. It is not worth the risk to yourself, your family and your home if you don't know exactly what you are doing. Never tinker or try to flash a device using the serial programming interface while it is connected to MAINS ELECTRICITY (AC power).
+
+We don't take any responsibility nor liability for using this software nor for the installation or any tips, advice, videos, etc. given by any member of this site or any related site.
+
 # Pre-build binary
 See the [releases](https://github.com/jamesturton/shelly-dimmer-stm32/releases) page to download the latest pre-build binary.
 
