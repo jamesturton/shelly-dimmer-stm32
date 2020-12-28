@@ -55,6 +55,12 @@
 #define SHD_CF1_PULSE_MIN                   1
 #define SHD_CF1_PULSE_MAX                   1000
 
+#define SHD_MIN_BRIGHTNESS                  10
+#define SHD_MAX_BRIGHTNESS                  990
+
+#define MIN(a,b) (((a)<(b))?(a):(b))
+#define MAX(a,b) (((a)>(b))?(a):(b))
+
 #define ADC_NUM_CHANNELS                    2
 
 typedef int32_t ring_size_t;
@@ -123,6 +129,8 @@ static uint32_t current_total_mag           = 0;
 static uint16_t voltage_max                 = 0;
 static uint16_t voltage_max_period          = 0;
 static uint32_t voltage_total               = 0;
+static uint16_t debug_1                     = 0;
+static uint16_t debug_2                     = 0;
 
 static void ring_init(struct ring *ring, uint8_t *buf, ring_size_t size)
 {
@@ -373,7 +381,7 @@ static void generate_reply(void)
 
     case SHD_POLL_CMD:
         {
-            len      = 17;
+            len      = 21;
             data[0]  = hw_version;              // ??
             data[1]  = 0;                       // ??
             data[2]  = brightness_req & 0xff;   // brightness
@@ -391,6 +399,10 @@ static void generate_reply(void)
             data[14] = current >> 16;           // current
             data[15] = current >> 24;           // current
             data[16] = leading_edge;            // leading edge
+            data[17] = debug_1;                 // debug 1
+            data[18] = debug_1 >> 8;            // debug 1
+            data[19] = debug_2;                 // debug 2
+            data[20] = debug_2 >> 8;           // debug 2
         }
         break;
 
@@ -899,11 +911,14 @@ void exti2_3_isr(void)
         current_total_mag = 0;
         voltage_max_period = voltage_total / adc_count;
         voltage_total = 0;
+        debug_1 = adc_count;
         adc_count = 0;
     }
 
     // Change ouput polarity if needed depending on leading edge mode
     brightness = leading_edge ? 1000 - brightness_req : brightness_req;
+    brightness = MAX(brightness, SHD_MIN_BRIGHTNESS);
+    brightness = MIN(brightness, SHD_MAX_BRIGHTNESS);
 
     // Adjust the brigtness value according to the mains frequency
     brightness_adj = brightness * line_freq / 1000;
