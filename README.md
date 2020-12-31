@@ -32,6 +32,9 @@ To flash the firmware directly to the STM32 chip using a programmer such as the 
 
  5. ```make -C src flash BMP_PORT=/dev/ttyBmpGdb```
 
+# Communication protocol
+Information on the communication protocol used can be found [here](COMMUNICATION.md).
+
 # Pinout
 Here is a guess of the pinout of the *STM32F031K6* chip.
 
