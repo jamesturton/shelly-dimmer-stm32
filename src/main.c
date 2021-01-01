@@ -885,6 +885,10 @@ void exti2_3_isr(void)
     // Reset interupt request
     exti_reset_request(EXTI2);
 
+    // Have we triggered too early? If so return straight away
+    if (timer_get_counter(TIM1) < (0.75 * line_freq))
+        return;
+
     if (gpio_get(GPIOB, GPIO2))
         line_freq_counter = timer_get_counter(TIM1);
     else
