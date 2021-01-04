@@ -524,6 +524,7 @@ static void gpio_setup(void)
     // Setup GPIO pins for MOSFET outputs on both HW1 and HW2
     gpio_mode_setup(GPIOA, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE,
                     GPIO8 | GPIO11 | GPIO12);
+    gpio_set(GPIOA, GPIO11);
 
     // Setup GPIO pins for test pads
     // gpio_mode_setup(GPIOA, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO6 | GPIO7);
@@ -886,7 +887,7 @@ void exti2_3_isr(void)
     exti_reset_request(EXTI2);
 
     // Have we triggered too early? If so return straight away
-    if (timer_get_counter(TIM1) < (0.75 * line_freq))
+    if (timer_get_counter(TIM1) < 750)
         return;
 
     if (gpio_get(GPIOB, GPIO2))
