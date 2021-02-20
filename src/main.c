@@ -55,8 +55,8 @@
 #define SHD_CF1_PULSE_MIN                   1
 #define SHD_CF1_PULSE_MAX                   1000
 
-#define SHD_MIN_BRIGHTNESS                  200
-#define SHD_MAX_BRIGHTNESS                  1000
+#define SHD_MIN_BRIGHTNESS                  000
+#define SHD_MAX_BRIGHTNESS                  900
 
 #define MIN(a,b) (((a)<(b))?(a):(b))
 #define MAX(a,b) (((a)>(b))?(a):(b))
@@ -402,7 +402,7 @@ static void generate_reply(void)
             data[17] = debug_1;                 // debug 1
             data[18] = debug_1 >> 8;            // debug 1
             data[19] = debug_2;                 // debug 2
-            data[20] = debug_2 >> 8;           // debug 2
+            data[20] = debug_2 >> 8;            // debug 2
         }
         break;
 
@@ -744,6 +744,60 @@ static void adc_setup(void)
     adc_start_conversion_regular(ADC1);
 }
 
+static void on_trigger(uint32_t gpio_bank, uint32_t gpio_pin)
+{
+    // Have we triggered too early? If so return straight away
+    if (timer_get_counter(TIM1) < 750)
+        return;
+
+    if (gpio_get(gpio_bank, gpio_pin))
+        line_freq_counter = timer_get_counter(TIM1);
+    else
+        line_freq = (line_freq_counter + timer_get_counter(TIM1)) / 2;
+
+    // Update only once per full line cycle
+    if (gpio_get(gpio_bank, gpio_pin))
+    {
+        current_max_period = current_total / adc_count;
+        current_total = 0;
+        current_total_mag_period = current_total_mag / adc_count;
+        current_total_mag = 0;
+        voltage_max_period = voltage_total / adc_count;
+        voltage_total = 0;
+        debug_1 = adc_count;
+        adc_count = 0;
+    }
+
+    // Change ouput polarity if needed depending on leading edge mode
+    brightness = brightness_req;
+    brightness = MAX(brightness, SHD_MIN_BRIGHTNESS);
+    brightness = MIN(brightness, SHD_MAX_BRIGHTNESS);
+    brightness = leading_edge ? 1000 - brightness : brightness;
+
+    // Adjust the brigtness value according to the mains frequency
+    brightness_adj = brightness * line_freq / 1000;
+    timer_set_oc_value(TIM1, TIM_OC1, brightness_adj);
+    timer_set_counter(TIM1, 0);
+
+    // No need to turn on if brightness is zero
+    if (brightness == 0)
+        return;
+
+    // Turn on the MOSFETs
+    if(leading_edge != (bool)(hw_version == dimmer1))
+    {
+        gpio_set(GPIOA, GPIO8);
+        gpio_set(GPIOA, GPIO11);
+        gpio_set(GPIOA, GPIO12);
+    }
+    else
+    {   
+        gpio_clear(GPIOA, GPIO8);
+        gpio_clear(GPIOA, GPIO11);
+        gpio_clear(GPIOA, GPIO12);
+    }
+}
+
 int main(void)
 {
     // Setup all subsystems
@@ -906,57 +960,7 @@ void exti2_3_isr(void)
     // Reset interupt request
     exti_reset_request(EXTI2);
 
-#if 1
-    // Have we triggered too early? If so return straight away
-    if (timer_get_counter(TIM1) < 750)
-        return;
-
-    if (gpio_get(GPIOB, GPIO2))
-        line_freq_counter = timer_get_counter(TIM1);
-    else
-        line_freq = (line_freq_counter + timer_get_counter(TIM1)) / 2;
-
-    // Update only once per full line cycle
-    if (gpio_get(GPIOB, GPIO2))
-    {
-        current_max_period = current_total / adc_count;
-        current_total = 0;
-        current_total_mag_period = current_total_mag / adc_count;
-        current_total_mag = 0;
-        voltage_max_period = voltage_total / adc_count;
-        voltage_total = 0;
-        debug_1 = adc_count;
-        adc_count = 0;
-    }
-
-    // Change ouput polarity if needed depending on leading edge mode
-    brightness = leading_edge ? 1000 - brightness_req : brightness_req;
-    brightness = MAX(brightness, SHD_MIN_BRIGHTNESS);
-    brightness = MIN(brightness, SHD_MAX_BRIGHTNESS);
-
-    // Adjust the brigtness value according to the mains frequency
-    brightness_adj = brightness * line_freq / 1000;
-    timer_set_oc_value(TIM1, TIM_OC1, brightness_adj);
-    timer_set_counter(TIM1, 0);
-
-    // No need to turn on if brightness is zero
-    if (brightness == 0)
-        return;
-
-    // Turn on the MOSFETs
-    if(leading_edge != (bool)(hw_version == dimmer1))
-    {
-        gpio_set(GPIOA, GPIO8);
-        gpio_set(GPIOA, GPIO11);
-        gpio_set(GPIOA, GPIO12);
-    }
-    else
-    {   
-        gpio_clear(GPIOA, GPIO8);
-        gpio_clear(GPIOA, GPIO11);
-        gpio_clear(GPIOA, GPIO12);
-    }
-#endif
+    on_trigger(GPIOB, GPIO2);
 }
 
 void exti4_15_isr(void)
@@ -967,55 +971,5 @@ void exti4_15_isr(void)
     // Reset interupt request
     exti_reset_request(EXTI7);
 
-#if 0
-    // Have we triggered too early? If so return straight away
-    if (timer_get_counter(TIM1) < 750)
-        return;
-
-    // if (gpio_get(GPIOB, GPIO7))
-    //     line_freq_counter = timer_get_counter(TIM1);
-    // else
-    //     line_freq = (line_freq_counter + timer_get_counter(TIM1)) / 2;
-
-    // Update only once per full line cycle
-    if (gpio_get(GPIOB, GPIO7))
-    {
-        current_max_period = current_total / adc_count;
-        current_total = 0;
-        current_total_mag_period = current_total_mag / adc_count;
-        current_total_mag = 0;
-        voltage_max_period = voltage_total / adc_count;
-        voltage_total = 0;
-        debug_1 = adc_count;
-        adc_count = 0;
-    }
-
-    // Change ouput polarity if needed depending on leading edge mode
-    brightness = leading_edge ? 1000 - brightness_req : brightness_req;
-    brightness = MAX(brightness, SHD_MIN_BRIGHTNESS);
-    brightness = MIN(brightness, SHD_MAX_BRIGHTNESS);
-
-    // Adjust the brigtness value according to the mains frequency
-    brightness_adj = brightness * line_freq / 1000;
-    timer_set_oc_value(TIM1, TIM_OC1, brightness_adj);
-    timer_set_counter(TIM1, 0);
-
-    // No need to turn on if brightness is zero
-    if (brightness == 0)
-        return;
-
-    // Turn on the MOSFETs
-    if(leading_edge != (bool)(hw_version == dimmer1))
-    {
-        gpio_set(GPIOA, GPIO8);
-        gpio_set(GPIOA, GPIO11);
-        gpio_set(GPIOA, GPIO12);
-    }
-    else
-    {   
-        gpio_clear(GPIOA, GPIO8);
-        gpio_clear(GPIOA, GPIO11);
-        gpio_clear(GPIOA, GPIO12);
-    }
-#endif
+    on_trigger(GPIOB, GPIO7);
 }
