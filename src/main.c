@@ -105,6 +105,8 @@ static hw_types hw_version                  = dimmer2;
 static uint16_t brightness                  = 0;
 static uint16_t brightness_req              = 0;
 static uint32_t brightness_adj              = 0;
+static uint32_t low_brightness_threshold    = 300; // switch on the mosfets later for low brightness
+
 static bool     leading_edge                = false;
 
 static uint16_t adc_data[ADC_NUM_CHANNELS]  = {0};
@@ -222,6 +224,7 @@ static void packet_process(uint8_t *buf)
         case SHD_SETTINGS_CMD:
             {
                 leading_edge = 2 - buf[pos + 2];
+                low_brightness_threshold = buf[pos + 7] << 8 | buf[pos + 6]; // this is warmup_brightness
             }
             break;
         default:
@@ -590,6 +593,7 @@ static void timer1_setup(void)
     timer_set_period(TIM1, 65535);
 
     timer_enable_irq(TIM1, TIM_DIER_CC1IE);
+    timer_enable_irq(TIM1, TIM_DIER_CC2IE);
 
     // Finally enable timer 1
     timer_enable_counter(TIM1);
@@ -726,6 +730,37 @@ static void adc_setup(void)
     adc_start_conversion_regular(ADC1);
 }
 
+static void mosfet_on(void) {
+    // Turn on the MOSFETs
+    if(leading_edge != (bool)(hw_version == dimmer1))
+    {
+        gpio_set(GPIOA, GPIO8);
+        gpio_set(GPIOA, GPIO11);
+        gpio_set(GPIOA, GPIO12);
+    }
+    else
+    {
+        gpio_clear(GPIOA, GPIO8);
+        gpio_clear(GPIOA, GPIO11);
+        gpio_clear(GPIOA, GPIO12);
+    }
+}
+
+static void mosfet_off(void) {
+    if(leading_edge != (bool)(hw_version == dimmer1))
+    {
+        gpio_clear(GPIOA, GPIO8);
+        gpio_clear(GPIOA, GPIO11);
+        gpio_clear(GPIOA, GPIO12);
+    }
+    else
+    {
+        gpio_set(GPIOA, GPIO8);
+        gpio_set(GPIOA, GPIO11);
+        gpio_set(GPIOA, GPIO12);
+    }
+}
+
 int main(void)
 {
     // Setup all subsystems
@@ -756,7 +791,6 @@ int main(void)
     return 0;
 }
 
-
 // Interupts
 
 void sys_tick_handler(void)
@@ -777,19 +811,18 @@ void tim1_cc_isr(void)
             return;
 
         // Turn off the MOSFETs
-        if(leading_edge != (bool)(hw_version == dimmer1))
-        {
-            gpio_clear(GPIOA, GPIO8);
-            gpio_clear(GPIOA, GPIO11);
-            gpio_clear(GPIOA, GPIO12);
-        }
-        else
-        {
-            gpio_set(GPIOA, GPIO8);
-            gpio_set(GPIOA, GPIO11);
-            gpio_set(GPIOA, GPIO12);
-        }
+        mosfet_off();
     }
+
+    if (timer_get_flag(TIM1, TIM_SR_CC2IF))
+    {
+        // Reset interupt flag
+        timer_clear_flag(TIM1, TIM_SR_CC2IF);
+        if (brightness == 0)
+            return;
+        mosfet_on();
+    }
+
 }
 
 void tim2_isr(void)
@@ -888,7 +921,24 @@ void exti2_3_isr(void)
     if (gpio_get(GPIOB, GPIO2))
         line_freq_counter = timer_get_counter(TIM1);
     else
-        line_freq = (line_freq_counter + timer_get_counter(TIM1)) / 2;
+        line_freq = line_freq - line_freq / 64 + (line_freq_counter + timer_get_counter(TIM1)) / 2;
+
+    // Change ouput polarity if needed depending on leading edge mode
+    brightness = leading_edge ? 1000 - brightness_req : brightness_req;
+
+    // Adjust the brigtness value according to the mains frequency
+    brightness_adj = brightness * line_freq / 64000;
+    if (brightness_adj < low_brightness_threshold) {
+        timer_set_oc_value(TIM1, TIM_OC1, low_brightness_threshold);
+        timer_set_oc_value(TIM1, TIM_OC2, low_brightness_threshold - brightness_adj);
+    } else if (brightness_adj > 0) {
+        timer_set_oc_value(TIM1, TIM_OC1, brightness_adj);
+        timer_set_oc_value(TIM1, TIM_OC2, 0);
+        mosfet_on();
+    }
+    timer_set_counter(TIM1, 0);
+
+    // after setting up the timer do the rest, as this may cause jitter
 
     // Update only once per full line cycle
     if (gpio_get(GPIOB, GPIO2))
@@ -902,29 +952,5 @@ void exti2_3_isr(void)
         adc_count = 0;
     }
 
-    // Change ouput polarity if needed depending on leading edge mode
-    brightness = leading_edge ? 1000 - brightness_req : brightness_req;
-
-    // Adjust the brigtness value according to the mains frequency
-    brightness_adj = brightness * line_freq / 1000;
-    timer_set_oc_value(TIM1, TIM_OC1, brightness_adj);
-    timer_set_counter(TIM1, 0);
-
-    // No need to turn on if brightness is zero
-    if (brightness == 0)
-        return;
-
-    // Turn on the MOSFETs
-    if(leading_edge != (bool)(hw_version == dimmer1))
-    {
-        gpio_set(GPIOA, GPIO8);
-        gpio_set(GPIOA, GPIO11);
-        gpio_set(GPIOA, GPIO12);
-    }
-    else
-    {   
-        gpio_clear(GPIOA, GPIO8);
-        gpio_clear(GPIOA, GPIO11);
-        gpio_clear(GPIOA, GPIO12);
-    }
 }
+
