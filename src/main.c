@@ -76,8 +76,8 @@ static uint8_t  id                          = 0;
 static uint8_t  cmd                         = 0;
 
 static uint32_t systick_ms                  = 0;
-static uint32_t line_freq                   = 1000; // Guess we are at 50 Hz
-static uint32_t line_freq_counter           = 0;
+static uint32_t line_freq                   = 1000 * 64; // Guess we are at 50 Hz (x 64 for enhanced precision in IIR filter)
+static uint32_t line_freq_counter           = 1000; // Guess we are at 50 Hz
 
 static uint32_t tim_ccr1_now                = 0;
 static uint32_t tim_ccr1_last               = 0;
@@ -105,9 +105,9 @@ static hw_types hw_version                  = dimmer2;
 static uint16_t brightness                  = 0;
 static uint16_t brightness_req              = 0;
 static uint32_t brightness_adj              = 0;
-static uint32_t low_brightness_threshold    = 300; // switch on the mosfets later for low brightness
 
 static bool     leading_edge                = false;
+static uint32_t low_brightness_threshold    = 0; // switch on the mosfets later for low brightness (default to 0)
 
 static uint16_t adc_data[ADC_NUM_CHANNELS]  = {0};
 static uint8_t  adc_channels[ADC_NUM_CHANNELS] =
@@ -921,24 +921,30 @@ void exti2_3_isr(void)
     if (gpio_get(GPIOB, GPIO2))
         line_freq_counter = timer_get_counter(TIM1);
     else
-        line_freq = line_freq - line_freq / 64 + (line_freq_counter + timer_get_counter(TIM1)) / 2;
+    {
+        line_freq_counter = (line_freq_counter + timer_get_counter(TIM1)) / 2;
+        line_freq = line_freq - line_freq / 64 + line_freq_counter;
+    }
 
     // Change ouput polarity if needed depending on leading edge mode
     brightness = leading_edge ? 1000 - brightness_req : brightness_req;
 
     // Adjust the brigtness value according to the mains frequency
     brightness_adj = brightness * line_freq / 64000;
-    if (brightness_adj < low_brightness_threshold) {
+    if (brightness_adj < low_brightness_threshold)
+    {
         timer_set_oc_value(TIM1, TIM_OC1, low_brightness_threshold);
         timer_set_oc_value(TIM1, TIM_OC2, low_brightness_threshold - brightness_adj);
-    } else if (brightness_adj > 0) {
+    }
+    else if (brightness_adj > 0)
+    {
         timer_set_oc_value(TIM1, TIM_OC1, brightness_adj);
         timer_set_oc_value(TIM1, TIM_OC2, 0);
         mosfet_on();
     }
     timer_set_counter(TIM1, 0);
 
-    // after setting up the timer do the rest, as this may cause jitter
+    // Do the rest after setting up the timer, as this may cause jitter
 
     // Update only once per full line cycle
     if (gpio_get(GPIOB, GPIO2))
@@ -951,6 +957,4 @@ void exti2_3_isr(void)
         voltage_total = 0;
         adc_count = 0;
     }
-
 }
-
