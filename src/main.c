@@ -125,6 +125,7 @@ static uint32_t current_total_mag           = 0;
 static uint16_t voltage_max                 = 0;
 static uint16_t voltage_max_period          = 0;
 static uint32_t voltage_total               = 0;
+static uint16_t max_brightness              = 500;
 
 static void ring_init(struct ring *ring, uint8_t *buf, ring_size_t size)
 {
@@ -543,8 +544,9 @@ static void gpio_setup(void)
     // Start in voltage measuring mode
     gpio_set(GPIOB, GPIO8);
 
-    // Setup GPIO pins for mains detect pin
+    // Setup GPIO pins for mains detect pins
     gpio_mode_setup(GPIOB, GPIO_MODE_INPUT, GPIO_PUPD_PULLDOWN, GPIO2);
+    gpio_mode_setup(GPIOB, GPIO_MODE_INPUT, GPIO_PUPD_PULLDOWN, GPIO7);
 
     // Setup analog GPIO pins
     gpio_mode_setup(GPIOA, GPIO_MODE_ANALOG, GPIO_PUPD_NONE, GPIO3); // ADC_IN3
@@ -678,15 +680,20 @@ static void timer3_setup(void)
 
 static void exti_setup(void)
 {
-    // Enable external interrupt 2
+    // Enable external interrupts 2 and 7
     nvic_enable_irq(NVIC_EXTI2_3_IRQ);
+    nvic_enable_irq(NVIC_EXTI4_15_IRQ);
 
     // Configure the EXTI subsystem
     exti_select_source(EXTI2, GPIOB);
-    exti_set_trigger(EXTI2, EXTI_TRIGGER_BOTH);
+    exti_select_source(EXTI7, GPIOB);
 
-    // Finally enable EXTI2
+    exti_set_trigger(EXTI2, EXTI_TRIGGER_BOTH);
+    exti_set_trigger(EXTI7, EXTI_TRIGGER_BOTH);
+
+    // Finally enable EXTI2 and EXTI7
     exti_enable_request(EXTI2);
+    exti_enable_request(EXTI7);
 }
 
 static void adc_setup(void)
@@ -762,6 +769,54 @@ static void mosfet_off(void) {
     }
 }
 
+static void on_trigger(uint32_t gpio_bank, uint32_t gpio_pin)
+{
+    // Have we triggered too early? If so return straight away
+    if (timer_get_counter(TIM1) < 750)
+        return;
+
+    if (gpio_get(gpio_bank, gpio_pin))
+        line_freq_counter = timer_get_counter(TIM1);
+    else
+    {
+        line_freq_counter = (line_freq_counter + timer_get_counter(TIM1)) / 2;
+        line_freq = line_freq - line_freq / 64 + line_freq_counter;
+    }
+
+    // Change ouput polarity if needed depending on leading edge mode
+    brightness = brightness_req * max_brightness / 1000;
+    brightness = leading_edge ? 1000 - brightness : brightness;
+
+    // Adjust the brigtness value according to the mains frequency
+    brightness_adj = brightness * line_freq / 64000;
+    if (brightness_adj < low_brightness_threshold)
+    {
+        timer_set_oc_value(TIM1, TIM_OC1, low_brightness_threshold);
+        timer_set_oc_value(TIM1, TIM_OC2, low_brightness_threshold - brightness_adj);
+    }
+    else if (brightness_adj > 0)
+    {
+        timer_set_oc_value(TIM1, TIM_OC1, brightness_adj);
+        timer_set_oc_value(TIM1, TIM_OC2, 0);
+        mosfet_on();
+    }
+    timer_set_counter(TIM1, 0);
+
+    // Do the rest after setting up the timer, as this may cause jitter
+
+    // Update only once per full line cycle
+    if (gpio_get(gpio_bank, gpio_pin))
+    {
+        current_max_period = current_total / adc_count;
+        current_total = 0;
+        current_total_mag_period = current_total_mag / adc_count;
+        current_total_mag = 0;
+        voltage_max_period = voltage_total / adc_count;
+        voltage_total = 0;
+        adc_count = 0;
+    }
+}
+
 int main(void)
 {
     // Setup all subsystems
@@ -823,7 +878,6 @@ void tim1_cc_isr(void)
             return;
         mosfet_on();
     }
-
 }
 
 void tim2_isr(void)
@@ -836,6 +890,7 @@ void tim2_isr(void)
         timer_clear_flag(TIM2, TIM_SR_CC1IF);
 
         hw_version = dimmer1;
+        max_brightness = 1000;
 
         // Calculate period of CF1 signal
         tim_ccr1_now = TIM_CCR1(TIM2);
@@ -916,50 +971,26 @@ void tim3_isr(void)
 
 void exti2_3_isr(void)
 {
+    if (!exti_get_flag_status(EXTI2))
+        return;
+
     // Reset interupt request
     exti_reset_request(EXTI2);
 
-    // Have we triggered too early? If so return straight away
-    if (timer_get_counter(TIM1) < 750)
+    on_trigger(GPIOB, GPIO2);
+}
+
+void exti4_15_isr(void)
+{
+    if (!exti_get_flag_status(EXTI7))
         return;
 
-    if (gpio_get(GPIOB, GPIO2))
-        line_freq_counter = timer_get_counter(TIM1);
-    else
-    {
-        line_freq_counter = (line_freq_counter + timer_get_counter(TIM1)) / 2;
-        line_freq = line_freq - line_freq / 64 + line_freq_counter;
-    }
+    // Reset interupt request
+    exti_reset_request(EXTI7);
 
-    // Change ouput polarity if needed depending on leading edge mode
-    brightness = leading_edge ? 1000 - brightness_req : brightness_req;
+    // We must be on dimmer2
+    // Ignore EXTI2 interupts so we don't trigger twice
+    exti_disable_request(EXTI2);
 
-    // Adjust the brigtness value according to the mains frequency
-    brightness_adj = brightness * line_freq / 64000;
-    if (brightness_adj < low_brightness_threshold)
-    {
-        timer_set_oc_value(TIM1, TIM_OC1, low_brightness_threshold);
-        timer_set_oc_value(TIM1, TIM_OC2, low_brightness_threshold - brightness_adj);
-    }
-    else if (brightness_adj > 0)
-    {
-        timer_set_oc_value(TIM1, TIM_OC1, brightness_adj);
-        timer_set_oc_value(TIM1, TIM_OC2, 0);
-        mosfet_on();
-    }
-    timer_set_counter(TIM1, 0);
-
-    // Do the rest after setting up the timer, as this may cause jitter
-
-    // Update only once per full line cycle
-    if (gpio_get(GPIOB, GPIO2))
-    {
-        current_max_period = current_total / adc_count;
-        current_total = 0;
-        current_total_mag_period = current_total_mag / adc_count;
-        current_total_mag = 0;
-        voltage_max_period = voltage_total / adc_count;
-        voltage_total = 0;
-        adc_count = 0;
-    }
+    on_trigger(GPIOB, GPIO7);
 }
