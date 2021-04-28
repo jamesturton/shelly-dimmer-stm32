@@ -9,7 +9,7 @@
                 "STM32F0",
                 "__ARM_ARCH_6M__"
             ],
-            "compilerPath": "/usr/bin/arm-none-eabi-gcc",
+            "compilerPath": "/usr/share/gcc-arm-none-eabi-9-2020-q2-update/bin/arm-none-eabi-gcc",
             "cStandard": "c99",
             "cppStandard": "c++14",
             "intelliSenseMode": "gcc-arm"
