@@ -1,7 +1,8 @@
 An open-source firmware for the STM32 co-processor on the Shelly Dimmer and Shelly Dimmer 2.
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![Gitpod Ready-to-Code](https://img.shields.io/badge/Gitpod-Ready--to--Code-blue?logo=gitpod)](https://gitpod.io/#https://github.com/jamesturton/shelly-dimmer-stm32)
+[![Open in Gitpod](https://img.shields.io/badge/Gitpod-Ready--to--Code-blue?logo=gitpod)](https://gitpod.io/#https://github.com/jamesturton/shelly-dimmer-stm32)
+[![Open in Visual Studio Code](https://img.shields.io/badge/VSCode-Ready--to--Code-blue?logo=visualstudiocode&logoColor=007acc)](https://open.vscode.dev/jamesturton/shelly-dimmer-stm32)
 
 # Disclaimer
 
