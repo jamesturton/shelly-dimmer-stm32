@@ -125,7 +125,11 @@ static uint32_t current_total_mag           = 0;
 static uint16_t voltage_max                 = 0;
 static uint16_t voltage_max_period          = 0;
 static uint32_t voltage_total               = 0;
+#ifdef SHD_NO_NEUTRAL
 static uint16_t max_brightness              = 500;
+#else
+static uint16_t max_brightness              = 1000;
+#endif
 
 static void ring_init(struct ring *ring, uint8_t *buf, ring_size_t size)
 {
@@ -693,7 +697,9 @@ static void exti_setup(void)
 
     // Finally enable EXTI2 and EXTI7
     exti_enable_request(EXTI2);
+#ifdef SHD_NO_NEUTRAL
     exti_enable_request(EXTI7);
+#endif
 }
 
 static void adc_setup(void)
