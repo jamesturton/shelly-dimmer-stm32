@@ -628,7 +628,7 @@ static void timer2_setup(void)
 
     // Setup channel 1, PA0
     timer_ic_set_input(TIM2, TIM_IC1, TIM_IC_IN_TI1);
-    timer_ic_set_filter(TIM2, TIM_IC_IN_TI1, TIM_IC_CK_INT_N_2);
+    timer_ic_set_filter(TIM2, TIM_IC1, TIM_IC_CK_INT_N_2);
     timer_ic_set_prescaler(TIM2, TIM_IC1, TIM_IC_PSC_OFF);
     timer_disable_oc_output(TIM2, TIM_OC1);
     timer_set_oc_polarity_high(TIM2, TIM_OC1);
@@ -638,7 +638,7 @@ static void timer2_setup(void)
     
     // Setup channel 2, PA1
     timer_ic_set_input(TIM2, TIM_IC2, TIM_IC_IN_TI2);
-    timer_ic_set_filter(TIM2, TIM_IC_IN_TI2, TIM_IC_CK_INT_N_2);
+    timer_ic_set_filter(TIM2, TIM_IC2, TIM_IC_CK_INT_N_2);
     timer_ic_set_prescaler(TIM2, TIM_IC2, TIM_IC_PSC_OFF);
     timer_disable_oc_output(TIM2, TIM_OC2);
     timer_set_oc_polarity_high(TIM2, TIM_OC2);
